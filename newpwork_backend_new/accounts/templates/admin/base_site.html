@@ -1,0 +1,34 @@
+{% extends "admin/base.html" %}
+{% block extrahead %}
+{{ block.super }}
+<style>
+  .pw-toggle-btn{margin-left:8px;padding:4px 8px;font-size:12px;line-height:1;border:1px solid #ccc;border-radius:4px;background:#f7f7f7;cursor:pointer}
+</style>
+<script>
+  (function(){
+    function addToggle(input){
+      if(!input)return;
+      var btn=document.createElement('button');
+      btn.type='button';
+      btn.className='pw-toggle-btn';
+      btn.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
+      btn.textContent=input.type==='password'?'👁':'🙈';
+      btn.addEventListener('click',function(){
+        var isHidden=input.getAttribute('type')==='password';
+        input.setAttribute('type',isHidden?'text':'password');
+        btn.setAttribute('aria-label',isHidden?'Hide password':'Show password');
+        btn.textContent=isHidden?'🙈':'👁';
+      });
+      if(input && input.insertAdjacentElement){
+        input.insertAdjacentElement('afterend', btn);
+      }
+    }
+    function init(){
+      addToggle(document.getElementById('id_password'));
+      addToggle(document.getElementById('id_password1'));
+      addToggle(document.getElementById('id_password2'));
+    }
+    if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}else{init();}
+  })();
+</script>
+{% endblock %}
