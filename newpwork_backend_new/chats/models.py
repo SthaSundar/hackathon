@@ -46,6 +46,7 @@ class ChatMessage(models.Model):
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.TEXT)
     content = models.TextField(blank=True)
     file = models.FileField(upload_to=chat_upload_path, null=True, blank=True)
+    is_first_response = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

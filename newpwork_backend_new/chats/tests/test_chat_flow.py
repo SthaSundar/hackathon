@@ -26,6 +26,8 @@ class ChatFlowTests(TestCase):
             password="pass123",
             role=UserRole.CUSTOMER,
         )
+        self.customer.is_email_verified = True
+        self.customer.save(update_fields=["is_email_verified"])
         self.provider = User.objects.create_user(
             username="prov1",
             email="prov1@example.com",
@@ -40,15 +42,10 @@ class ChatFlowTests(TestCase):
         )
         self.service = Service.objects.create(
             provider=self.provider,
-            category=self.category,
-            title="Consultation",
-            slug="consultation",
-            description="Pre-booking inquiry allowed",
-            base_price=Decimal("150.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Premium Floral Setup",
+            description="Professional floral decoration services.",
+            base_price=Decimal("1000.00"),
+            pricing_type=Service.PricingType.NEGOTIABLE,
             is_active=True,
         )
 
@@ -65,7 +62,8 @@ class ChatFlowTests(TestCase):
         self.client.force_authenticate(user=self.provider)
         url = reverse("start_inquiry_thread", kwargs={"service_id": self.service.id})
         resp = self.client.post(url, {}, format="json")
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Only customers can start inquiry chats", resp.data["detail"])
 
     def test_inquiry_chat_blocks_links_and_files(self):
         # Start inquiry
@@ -122,6 +120,11 @@ class ChatFlowTests(TestCase):
         pdf = SimpleUploadedFile("a.pdf", pdf_bytes, content_type="application/pdf")
         resp_pdf = self.client.post(msg_url, {"content": "see doc", "file": pdf}, format="multipart")
         self.assertEqual(resp_pdf.status_code, 201)
+        # Plain text
+        txt = SimpleUploadedFile("notes.txt", b"hello world\n", content_type="text/plain")
+        resp_txt = self.client.post(msg_url, {"content": "see txt", "file": txt}, format="multipart")
+        self.assertEqual(resp_txt.status_code, 201)
+        self.assertEqual(resp_txt.data.get("kind"), "document")
 
     def test_booking_chat_rejects_large_file(self):
         thread_id = self._confirm_booking_and_get_chat()
@@ -188,7 +191,7 @@ class ChatFlowTests(TestCase):
         entry = next((t for t in data if t.get("id") == thread_id), None)
         self.assertIsNotNone(entry)
         self.assertGreaterEqual(entry.get("unread_count", 0), 2)
-        self.assertEqual(entry.get("service_title"), "Consultation")
+        self.assertEqual(entry.get("service_title"), "Premium Floral Setup")
         self.assertEqual(entry.get("client_email"), self.customer.email)
         self.assertIsNotNone(entry.get("expires_in_seconds"))
 

@@ -32,15 +32,10 @@ class ProviderOrdersTests(TestCase):
         )
         self.service = Service.objects.create(
             provider=self.provider,
-            category=self.category,
-            title="Service",
-            slug="service",
-            description="Test",
-            base_price=Decimal("100.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Premium Wedding Bouquet",
+            description="Handcrafted floral bouquets for your special day.",
+            base_price=Decimal("2500.00"),
+            pricing_type=Service.PricingType.FIXED,
             is_active=True,
         )
         # Create one pending, one confirmed, one completed

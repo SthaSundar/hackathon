@@ -1,21 +1,24 @@
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
-from django.db.models import Count
-from django.db.models import Q
+from decimal import Decimal
+from django.db.models import Count, Q, Sum
 from .models import User, UserRole, KYCVerification, Notification
 from django.conf import settings
-from services.models import Service
+from services.service_models import Service
 from bookings.models import Booking, Payment
 from django.db import models
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from .serializers import KYCVerificationSerializer, UserSerializer, NotificationSerializer
 import jwt
+import secrets
+import hashlib
 from datetime import datetime, timedelta
-from django.db.models import Count
+from django.core.cache import cache
+from django.contrib.auth.hashers import make_password
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -115,6 +118,34 @@ def validate_password(password):
     return True, None
 
 
+def normalize_np_mobile(raw):
+    digits = "".join(c for c in (raw or "") if c.isdigit())
+    if len(digits) == 13 and digits.startswith("977"):
+        digits = digits[3:]
+    if len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    if len(digits) == 10 and digits[:2] in ("98", "97", "96"):
+        return digits
+    return None
+
+
+def can_book_budget_tier(user):
+    if getattr(user, "phone_verified", False):
+        return True
+    if getattr(user, "is_email_verified", False):
+        return True
+    if getattr(user, "google_id", None):
+        return True
+    return False
+
+
+def profile_complete_for_premium_booking(user):
+    name = (user.display_name or "").strip()
+    phone = (user.phone_number or "").strip()
+    addr = (user.address or "").strip()
+    return bool(name and phone and addr)
+
+
 def validate_email(email):
     """Validate email format"""
     import re
@@ -132,9 +163,15 @@ def register(request):
     password = request.data.get("password", "")
     username = request.data.get("username", "").strip() or email.split("@")[0] if email else ""
     role = request.data.get("role", UserRole.CUSTOMER)
+    category = request.data.get("category")
 
     if not email or not password:
         return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if role == UserRole.PROVIDER and category:
+        from .models import ProviderCategory
+        if category not in ProviderCategory.values:
+            return Response({"error": f"Invalid category. Must be one of: {', '.join(ProviderCategory.values)}"}, status=status.HTTP_400_BAD_REQUEST)
 
     # Validate email
     is_valid_email, email_error = validate_email(email)
@@ -153,7 +190,9 @@ def register(request):
         username=username,
         email=email,
         password=password,
-        role=role
+        role=role,
+        category=category if role == UserRole.PROVIDER else None,
+        is_email_verified=True,
     )
 
     # Generate JWT token
@@ -175,6 +214,129 @@ def register(request):
         },
         "message": "Account created successfully!"
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def client_register_start(request):
+    """Part 1 — Step A: name, phone, password only; stores pending registration and issues OTP (dev: logged + debug_otp)."""
+    name = (request.data.get("name") or "").strip()
+    phone = normalize_np_mobile(request.data.get("phone") or request.data.get("phone_number") or "")
+    password = request.data.get("password") or ""
+
+    if len(name) < 2:
+        return Response({"detail": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+    if not phone:
+        return Response(
+            {"detail": "Enter a valid Nepal mobile number (10 digits starting with 98, 97, or 96)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    ok, pwd_err = validate_password(password)
+    if not ok:
+        return Response({"detail": pwd_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    email = f"{phone}@phone.npw.local"
+    if User.objects.filter(Q(phone_number=phone) | Q(email=email)).exists():
+        return Response({"detail": "An account with this phone already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+    otp = f"{secrets.randbelow(900000) + 100000:06d}"
+    otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+    cache.set(
+        f"client_reg:{phone}",
+        {"name": name, "phone": phone, "password_hash": make_password(password), "otp_hash": otp_hash},
+        timeout=600,
+    )
+    print(f"[CLIENT_REG_OTP] {phone} -> {otp}")
+    body = {"message": "OTP sent. Enter it to finish sign-up."}
+    if settings.DEBUG:
+        body["debug_otp"] = otp
+    return Response(body, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def client_register_confirm(request):
+    """Part 1 — Step B: phone + OTP; creates customer and returns JWT."""
+    phone = normalize_np_mobile(request.data.get("phone") or request.data.get("phone_number") or "")
+    otp = (request.data.get("otp") or "").strip()
+    if not phone or not otp:
+        return Response({"detail": "Phone and OTP are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    key = f"client_reg:{phone}"
+    data = cache.get(key)
+    if not data:
+        return Response({"detail": "Code expired or not found. Start again from step one."}, status=status.HTTP_400_BAD_REQUEST)
+    if hashlib.sha256(otp.encode()).hexdigest() != data["otp_hash"]:
+        return Response({"detail": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+    email = f"{phone}@phone.npw.local"
+    if User.objects.filter(email=email).exists():
+        cache.delete(key)
+        return Response({"detail": "Account already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User(
+        username=f"c_{phone}",
+        email=email,
+        display_name=data["name"],
+        phone_number=phone,
+        phone_verified=True,
+        role=UserRole.CUSTOMER,
+        category=None,
+        is_email_verified=False,
+    )
+    user.password = data["password_hash"]
+    user.save()
+
+    cache.delete(key)
+
+    secret = getattr(settings, "NEXTAUTH_SECRET", settings.SECRET_KEY)
+    payload = {
+        "email": user.email,
+        "exp": datetime.utcnow() + timedelta(days=7),
+        "iat": datetime.utcnow(),
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    return Response(
+        {
+            "token": token,
+            "user": {
+                "email": user.email,
+                "name": user.display_name or user.username,
+                "role": user.role,
+                "image": user.avatar_url,
+            },
+            "message": "Account created.",
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def patch_my_profile(request):
+    """Update address / display name / phone for premium-tier booking eligibility."""
+    import re
+
+    user = request.user
+    if "address" in request.data:
+        user.address = (request.data.get("address") or "").strip()
+    if "display_name" in request.data:
+        user.display_name = (request.data.get("display_name") or "").strip()
+    if "phone_number" in request.data:
+        raw = (request.data.get("phone_number") or "").strip()
+        if raw and not re.match(r"^(98|97|96)\d{8}$", raw):
+            return Response({"detail": "Invalid Nepal phone format."}, status=status.HTTP_400_BAD_REQUEST)
+        user.phone_number = raw
+    user.save()
+    return Response(
+        {
+            "display_name": user.display_name,
+            "phone_number": user.phone_number,
+            "address": user.address,
+            "profile_complete": profile_complete_for_premium_booking(user),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['POST'])
@@ -208,34 +370,26 @@ def sync_user(request):
             logger.info(f"Elevating {email} to admin (matches ADMIN_EMAIL)")
             user.role = UserRole.ADMIN
             user.save()
-    # Optionally update role if provided and valid (but never downgrade admin).
+    # Update role if provided and valid.
     elif role in dict(UserRole.choices).keys():
         if user.role != UserRole.ADMIN:
-            # Enforce KYC requirement for provider role
-            if role == UserRole.PROVIDER:
-                has_kyc = hasattr(user, 'kyc_verification')
-                kyc_verified = has_kyc and user.kyc_verification.is_verified
-                if not kyc_verified:
-                    logger.info(f"Refusing provider role for {email}: KYC not verified")
-                    # Force customer role if provider requested without KYC
-                    if user.role != UserRole.CUSTOMER:
-                        user.role = UserRole.CUSTOMER
-                        user.save()
-                else:
-                    logger.info(f"Setting provider role for {email} (KYC verified)")
-                    user.role = UserRole.PROVIDER
-                    user.save()
-            elif role == UserRole.CUSTOMER:
-                # Allow switching back to customer
-                if user.role != UserRole.CUSTOMER:
-                    logger.info(f"Switching role for {email} to customer")
-                    user.role = UserRole.CUSTOMER
-                    user.save()
-            else:
-                # Other roles: set only if different
-                if user.role != role:
-                    logger.info(f"Updating role for {email} from {user.role} to {role}")
-                    user.role = role
+            # We allow users to have the PROVIDER role even without KYC verification
+            # so they can access their dashboard and set up their profile.
+            # Actual service posting/visibility is restricted in specific views.
+            
+            # PROTECT PROVIDER ROLE: If it's a request to switch roles, allow it.
+            # We used to prevent downgrade to prevent 403s, but now we handle it.
+            if user.role != role:
+                logger.info(f"Updating role for {email} from {user.role} to {role}")
+                user.role = role
+                user.save()
+            
+            # If category is provided for a provider, update it
+            category = request.data.get("category")
+            if user.role == UserRole.PROVIDER and category:
+                from .models import ProviderCategory
+                if category in ProviderCategory.values:
+                    user.category = category
                     user.save()
 
     logger.info(f"sync_user completed for {email}, final_role={user.role}")
@@ -251,22 +405,82 @@ def user_status(request):
     kyc_status = user.kyc_verification.status if has_kyc else "not_submitted"
     kyc_verified = has_kyc and user.kyc_verification.is_verified
     
+    # NEW: Check if business certificate exists
+    has_trade_cert = has_kyc and bool(user.kyc_verification.trade_certificate)
+    
+    # Force unverified if trade certificate is missing for any provider
+    if user.role == UserRole.PROVIDER and not has_trade_cert and kyc_verified:
+        # Silently invalidate verified status if trade cert is missing
+        kyc_verified = False
+        kyc_status = "pending" # Force back to pending/update
+        user.kyc_verification.status = "pending"
+        user.kyc_verification.save()
+
     return Response({
+        "id": user.id,
         "email": user.email,
+        "name": user.display_name or user.username,
+        "image": user.avatar_url,
         "role": user.role,
+        "freshness_guarantee": bool(getattr(user, "freshness_guarantee", False)),
+        "freshness_violations": getattr(user, "freshness_violations", 0),
         "is_provider": user.role == UserRole.PROVIDER,
+        "phone_verified": getattr(user, "phone_verified", False),
+        "is_email_verified": getattr(user, "is_email_verified", False),
+        "profile_complete": profile_complete_for_premium_booking(user),
+        "address": getattr(user, "address", "") or "",
+        "phone_number": getattr(user, "phone_number", "") or "",
         "has_kyc": has_kyc,
         "kyc_status": kyc_status,
         "kyc_verified": kyc_verified,
-        "can_post_services": user.role == UserRole.PROVIDER and kyc_verified,
+        "has_trade_cert": has_trade_cert,
+        "can_post_services": user.role == UserRole.PROVIDER and kyc_verified and has_trade_cert,
         "issues": [
             issue for issue in [
                 "User role is not 'provider'" if user.role != UserRole.PROVIDER else None,
                 "KYC not submitted" if not has_kyc else None,
+                "Trade/Business certificate missing" if user.role == UserRole.PROVIDER and not has_trade_cert else None,
                 f"KYC status is '{kyc_status}' (needs to be 'approved')" if has_kyc and not kyc_verified else None,
             ] if issue
         ]
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def admin_stats(request):
+    """Return basic admin statistics."""
+    # Ensure user is admin
+    if getattr(request.user, 'role', None) != UserRole.ADMIN:
+        return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+    total_users = User.objects.count()
+    providers_count = User.objects.filter(role=UserRole.PROVIDER).count()
+    verified_count = KYCVerification.objects.filter(status=KYCVerification.Status.APPROVED).count()
+    
+    # eSewa (and most flows) update Booking.payment_status, not legacy Payment rows
+    paid_booking_statuses = (
+        Booking.BookingPaymentStatus.HELD,
+        Booking.BookingPaymentStatus.RELEASED,
+    )
+    agg = Booking.objects.filter(payment_status__in=paid_booking_statuses).aggregate(
+        total=Sum("commission_amount")
+    )
+    total_revenue = agg["total"] if agg["total"] is not None else Decimal("0")
+    # Stripe / legacy: successful Payment rows whose booking is not yet in paid booking states
+    legacy = Decimal("0")
+    for p in Payment.objects.filter(status="success").select_related("booking"):
+        b = p.booking
+        if b.payment_status not in paid_booking_statuses and (p.commission_amount or 0) > 0:
+            legacy += p.commission_amount or Decimal("0")
+
+    data = {
+        "total_users": total_users,
+        "providers_count": providers_count,
+        "verified_count": verified_count,
+        "total_revenue": str(total_revenue + legacy),
+    }
+    return Response(data)
 
 
 @api_view(['GET'])
@@ -296,6 +510,26 @@ def stats(request):
     return Response(data)
 
 
+def _provider_earnings_npr(qs):
+    """Sum provider-side earnings for bookings with funds held or released."""
+    paid_ps = (
+        Booking.BookingPaymentStatus.HELD,
+        Booking.BookingPaymentStatus.RELEASED,
+    )
+    total = Decimal("0")
+    rows = qs.filter(payment_status__in=paid_ps).values_list(
+        "provider_payout_amount", "amount_paid", "commission_amount"
+    )
+    for payout, paid, comm in rows:
+        if payout is not None:
+            total += payout
+        elif paid is not None and comm is not None:
+            total += paid - comm
+        elif paid is not None:
+            total += paid
+    return total
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def user_stats(request):
@@ -305,10 +539,13 @@ def user_stats(request):
     if getattr(user, "role", None) == UserRole.PROVIDER:
         # Provider stats
         my_services = Service.objects.filter(provider=user).count()
-        my_bookings = Booking.objects.filter(service__provider=user).count()
-        pending_bookings = Booking.objects.filter(service__provider=user, status=Booking.Status.PENDING).count()
-        confirmed_bookings = Booking.objects.filter(service__provider=user, status=Booking.Status.CONFIRMED).count()
-        completed_bookings = Booking.objects.filter(service__provider=user, status=Booking.Status.COMPLETED).count()
+        active_services = Service.objects.filter(provider=user, is_active=True).count()
+        provider_bookings = Booking.objects.filter(service__provider=user)
+        my_bookings = provider_bookings.count()
+        pending_bookings = provider_bookings.filter(status=Booking.Status.PENDING).count()
+        confirmed_bookings = provider_bookings.filter(status=Booking.Status.CONFIRMED).count()
+        completed_bookings = provider_bookings.filter(status=Booking.Status.COMPLETED).count()
+        total_earned = _provider_earnings_npr(provider_bookings)
         
         # Calculate average rating
         completed_with_ratings = Booking.objects.filter(
@@ -319,6 +556,11 @@ def user_stats(request):
         avg_rating = completed_with_ratings.aggregate(avg=models.Avg('rating'))['avg'] or 0
         
         data = {
+            # Dashboard cards (aligned with frontend)
+            "bookings_count": my_bookings,
+            "services_count": active_services,
+            "total_earned": str(total_earned.quantize(Decimal("0.01"))),
+            # Legacy / detail fields
             "total_services": my_services,
             "total_bookings": my_bookings,
             "pending_bookings": pending_bookings,
@@ -327,17 +569,26 @@ def user_stats(request):
             "average_rating": round(avg_rating, 1),
         }
     elif getattr(user, "role", None) == UserRole.CUSTOMER:
-        # Customer stats - only count completed for services used, confirmed for active bookings
-        completed_bookings = Booking.objects.filter(customer=user, status=Booking.Status.COMPLETED).exclude(service__provider=user).count()
-        pending_bookings = Booking.objects.filter(customer=user, status=Booking.Status.PENDING).exclude(service__provider=user).count()
-        confirmed_bookings = Booking.objects.filter(customer=user, status=Booking.Status.CONFIRMED).exclude(service__provider=user).count()
+        # Customer bookings (exclude self-booking own service edge case)
+        cust_bookings = Booking.objects.filter(customer=user).exclude(service__provider=user)
+        all_count = cust_bookings.count()
+        pending_bookings = cust_bookings.filter(status=Booking.Status.PENDING).count()
+        confirmed_bookings = cust_bookings.filter(status=Booking.Status.CONFIRMED).count()
+        completed_bookings = cust_bookings.filter(status=Booking.Status.COMPLETED).count()
+        active_bookings_count = cust_bookings.filter(
+            status__in=(Booking.Status.PENDING, Booking.Status.CONFIRMED)
+        ).count()
         
         data = {
-            "total_bookings": completed_bookings,  # Only completed count as "services used"
+            "bookings_count": all_count,
+            "active_bookings_count": active_bookings_count,
+            "services_count": 0,
+            "total_earned": "0",
+            "total_bookings": all_count,
             "pending_bookings": pending_bookings,
             "confirmed_bookings": confirmed_bookings,
             "completed_bookings": completed_bookings,
-            "active_bookings": confirmed_bookings,  # Only confirmed count as active
+            "active_bookings": confirmed_bookings,
         }
     else:
         # Admin stats (same as public stats)
@@ -426,6 +677,17 @@ def submit_kyc(request):
         # Allow resubmission on rejection
         serializer = KYCVerificationSerializer(kyc, data=request.data, context=context)
         if serializer.is_valid():
+            # NEW: Business certificate is now mandatory for ALL provider roles
+            if not request.FILES.get("trade_certificate") and not kyc.trade_certificate:
+                return Response({"detail": "Trade/Business Certificate is now mandatory for all service providers."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate phone number
+            phone_number = request.data.get("phone_number", "").strip()
+            import re
+            if phone_number and not re.match(r'^(98|97|96)\d{8}$', phone_number):
+                return Response({"detail": "Invalid Nepal phone number. Must be 10 digits starting with 98, 97, or 96."}, status=status.HTTP_400_BAD_REQUEST)
+
+            category = request.data.get("category", "flower_vendor")
             previous_notes = kyc.admin_notes
             serializer.save(
                 status=KYCVerification.Status.PENDING,
@@ -433,6 +695,7 @@ def submit_kyc(request):
                 verified_at=None,
                 verified_by=None,
                 email=user.email,
+                category=category
             )
             # Update user's phone number if provided
             phone_number = request.data.get("phone_number")
@@ -456,8 +719,19 @@ def submit_kyc(request):
     try:
         serializer = KYCVerificationSerializer(data=request.data, context=context)
         if serializer.is_valid():
+            # NEW: Business certificate is now mandatory for ALL provider roles
+            if not request.FILES.get("trade_certificate"):
+                return Response({"detail": "Trade/Business Certificate is now mandatory for all service providers."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate phone number
+            phone_number = request.data.get("phone_number", "").strip()
+            import re
+            if phone_number and not re.match(r'^(98|97|96)\d{8}$', phone_number):
+                return Response({"detail": "Invalid Nepal phone number. Must be 10 digits starting with 98, 97, or 96."}, status=status.HTTP_400_BAD_REQUEST)
+
             try:
-                instance = serializer.save(user=user, email=user.email)
+                category = request.data.get("category", "flower_vendor")
+                instance = serializer.save(user=user, email=user.email, category=category)
 
                 phone_number = request.data.get("phone_number")
                 if phone_number:
@@ -571,11 +845,14 @@ def list_kyc(request):
     user = request.user
     if getattr(user, "role", None) != UserRole.ADMIN:
         return Response({"detail": "Only admins can view KYC verifications."}, status=status.HTTP_403_FORBIDDEN)
-    status_param = (request.GET.get("status") or KYCVerification.Status.PENDING).lower()
-    qs = KYCVerification.objects.all()
+    
+    status_param = (request.GET.get("status") or "all").lower()
+    qs = KYCVerification.objects.all().order_by('-updated_at')
+    
     if status_param in (KYCVerification.Status.PENDING, KYCVerification.Status.APPROVED, KYCVerification.Status.REJECTED):
         qs = qs.filter(status=status_param)
-    serializer = KYCVerificationSerializer(qs.order_by('-id'), many=True, context={"request": request})
+    
+    serializer = KYCVerificationSerializer(qs, many=True, context={"request": request})
     return Response(serializer.data)
 
 
@@ -647,55 +924,41 @@ def verify_kyc(request, kyc_id: int):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def list_users(request):
-    """Admin-only: list users with basic stats.
-
-    Supports optional query params: role, active (true/false), search.
-    """
+    """Admin-only: list all users with stats."""
     user = request.user
     if getattr(user, "role", None) != UserRole.ADMIN:
-        return Response({"detail": "Only admins can list users."}, status=status.HTTP_403_FORBIDDEN)
-
-    qs = User.objects.all().select_related()
-    role = request.GET.get("role")
-    if role in dict(UserRole.choices).keys():
-        qs = qs.filter(role=role)
-    active = request.GET.get("active")
-    if active in ("true", "false"):
-        qs = qs.filter(is_active=(active == "true"))
-    search = request.GET.get("search", "").strip()
-    if search:
-        qs = qs.filter(models.Q(email__icontains=search) | models.Q(username__icontains=search))
-
-    # annotate counts
-    qs = qs.annotate(
-        services_count=Count('services', distinct=True),
-        bookings_count=Count('bookings', distinct=True),
-        completed_as_customer=Count('bookings', filter=Q(bookings__status=Booking.Status.COMPLETED), distinct=True),
-        completed_as_provider=Count('services__bookings', filter=Q(services__bookings__status=Booking.Status.COMPLETED), distinct=True),
-    )
-
-    data = []
-    for u in qs[:200]:  # simple cap
-        kyc_status = None
-        is_verified = False
-        if hasattr(u, 'kyc_verification'):
-            kyc_status = u.kyc_verification.status
-            is_verified = u.kyc_verification.is_verified
-        data.append({
-            "id": u.id,
-            "email": u.email,
-            "username": u.display_name or u.username,
-            "role": u.role,
-            "is_active": u.is_active,
-            "kyc_status": kyc_status or "not_submitted",
-            "is_verified": is_verified,
-            "services_count": u.services_count,
-            "bookings_count": u.bookings_count,
-            "completed_count": int((u.completed_as_customer or 0) + (u.completed_as_provider or 0)),
-            "date_joined": u.date_joined,
-        })
-
-    return Response(data)
+        return Response({"detail": "Only admins can view users."}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        qs = User.objects.all().order_by('-date_joined')
+        
+        data = []
+        for u in qs[:200]:  # simple cap
+            kyc_status = "not_submitted"
+            is_verified = False
+            if hasattr(u, 'kyc_verification'):
+                kyc_status = u.kyc_verification.status
+                is_verified = u.kyc_verification.status == KYCVerification.Status.APPROVED
+            
+            data.append({
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "role": u.role,
+                "category": u.category,
+                "is_active": u.is_active,
+                "is_verified": is_verified,
+                "kyc_status": kyc_status,
+                "services_count": 0,
+                "bookings_count": 0,
+                "date_joined": u.date_joined.isoformat() if u.date_joined else None,
+            })
+        return Response(data)
+    except Exception as e:
+        import traceback
+        print(f"ERROR in list_users: {e}")
+        print(traceback.format_exc())
+        return Response({"detail": f"Internal Server Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['DELETE'])
@@ -773,3 +1036,121 @@ def unread_notifications_count(request):
     """Get count of unread notifications."""
     count = Notification.objects.filter(user=request.user, is_read=False).count()
     return Response({"unread_count": count})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def list_providers(request):
+    """List verified providers by category (public)"""
+    from django.core.paginator import Paginator
+    from .models import ProviderCategory
+    
+    # Filter for providers
+    queryset = User.objects.filter(role=UserRole.PROVIDER)
+    
+    # If any provider is fully approved, prefer verified partners—but still include providers
+    # who have at least one active service so the directory matches bookable listings.
+    has_approved = User.objects.filter(role=UserRole.PROVIDER, kyc_verification__status='approved').exists()
+    if has_approved:
+        queryset = queryset.filter(
+            Q(kyc_verification__status='approved') | Q(service_listings__is_active=True)
+        ).distinct()
+    
+    category = request.query_params.get("category")
+    if category and category in ProviderCategory.values:
+        queryset = queryset.filter(category=category)
+    
+    search = request.query_params.get("q")
+    if search:
+        queryset = queryset.filter(
+            Q(username__icontains=search) | 
+            Q(display_name__icontains=search) |
+            Q(bio__icontains=search)
+        )
+    
+    # Sort featured first, then rating (distinct avoids duplicate rows from booking joins)
+    queryset = queryset.annotate(
+        service_count=Count('service_listings', filter=Q(service_listings__is_active=True)),
+        avg_rating=models.Avg('service_listings__bookings__rating', filter=Q(service_listings__bookings__status=Booking.Status.COMPLETED))
+    ).distinct().order_by('-is_featured', '-avg_rating', 'id')
+
+    # Pagination
+    page_size = 12
+    paginator = Paginator(queryset, page_size)
+    page_number = request.query_params.get('page', 1)
+    page_obj = paginator.get_page(page_number)
+
+    from accounts.response_time import format_response_time_label
+
+    data = []
+    for p in page_obj:
+        is_verified = hasattr(p, 'kyc_verification') and p.kyc_verification.status == 'approved'
+        data.append({
+            "id": p.id,
+            "name": p.display_name or p.username,
+            "category": p.category,
+            "profile_photo": p.avatar_url,
+            "average_rating": p.avg_rating,
+            "service_count": p.service_count,
+            "is_featured": getattr(p, 'is_featured', False),
+            "is_verified": is_verified,
+            "freshness_guarantee": bool(getattr(p, "freshness_guarantee", False)),
+            "avg_response_hours": getattr(p, "avg_response_hours", None),
+            "response_label": format_response_time_label(getattr(p, "avg_response_hours", None)),
+        })
+
+    return Response({
+        "results": data,
+        "count": paginator.count,
+        "num_pages": paginator.num_pages,
+        "current_page": page_obj.number
+    })
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def provider_detail(request, user_id):
+    """Get public details for a single verified provider"""
+    from django.db.models import Count, Q
+    from bookings.models import Booking
+    try:
+        p = User.objects.annotate(
+            service_count=Count('service_listings', filter=Q(service_listings__is_active=True)),
+            avg_rating=models.Avg('service_listings__bookings__rating', filter=Q(service_listings__bookings__status=Booking.Status.COMPLETED))
+        ).get(id=user_id, role=UserRole.PROVIDER)
+        
+        from accounts.response_time import format_response_time_label
+
+        return Response({
+            "id": p.id,
+            "name": p.display_name or p.username,
+            "email": p.email,
+            "category": p.category,
+            "profile_photo": p.avatar_url,
+            "average_rating": p.avg_rating,
+            "service_count": p.service_count,
+            "is_featured": getattr(p, 'is_featured', False),
+            "phone": p.phone_number,
+            "is_verified": hasattr(p, 'kyc_verification') and p.kyc_verification.is_verified,
+            "freshness_guarantee": bool(getattr(p, "freshness_guarantee", False)),
+            "avg_response_hours": getattr(p, "avg_response_hours", None),
+            "response_label": format_response_time_label(getattr(p, "avg_response_hours", None)),
+        })
+    except User.DoesNotExist:
+        return Response({"detail": "Provider not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def toggle_featured(request, user_id):
+    """Admin only: Toggle featured status for a provider"""
+    if getattr(request.user, "role", None) != UserRole.ADMIN:
+        return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        provider = User.objects.get(id=user_id, role=UserRole.PROVIDER)
+        provider.is_featured = not getattr(provider, 'is_featured', False)
+        provider.save()
+        return Response({"id": provider.id, "is_featured": provider.is_featured})
+    except User.DoesNotExist:
+        return Response({"detail": "Provider not found."}, status=status.HTTP_404_NOT_FOUND)

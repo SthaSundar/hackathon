@@ -32,15 +32,10 @@ class MyBookingsScopeTests(TestCase):
         )
         self.service = Service.objects.create(
             provider=self.provider,
-            category=self.category,
-            title="Service",
-            slug="service",
-            description="Test",
-            base_price=Decimal("100.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Office Plant Maintenance",
+            description="Regular maintenance of office plants in Kathmandu.",
+            base_price=Decimal("5000.00"),
+            pricing_type=Service.PricingType.PER_MONTH,
             is_active=True,
         )
         self.booking = Booking.objects.create(

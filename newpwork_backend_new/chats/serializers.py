@@ -11,8 +11,20 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatMessage
-        fields = ["id", "thread", "sender", "sender_email", "sender_name", "kind", "content", "file", "file_url", "created_at"]
-        read_only_fields = ["sender", "created_at"]
+        fields = [
+            "id",
+            "thread",
+            "sender",
+            "sender_email",
+            "sender_name",
+            "kind",
+            "content",
+            "file",
+            "file_url",
+            "is_first_response",
+            "created_at",
+        ]
+        read_only_fields = ["sender", "created_at", "is_first_response"]
 
     def validate(self, attrs):
         thread = self.context.get("thread")
@@ -45,17 +57,46 @@ class ChatMessageSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"limit": "Message limit reached for inquiry chat"})
 
         else:
-            # Booking chat: allow image/pdf with 5MB limit
+            # Booking chat: images, PDF, text, Word — 5MB limit
             if file:
                 max_size = 5 * 1024 * 1024
                 if file.size > max_size:
                     raise serializers.ValidationError({"file": "File too large (max 5MB)"})
-                ct = getattr(file, "content_type", None) or ""
-                allowed = ["image/jpeg", "image/png", "application/pdf"]
-                if ct not in allowed:
-                    raise serializers.ValidationError({"file": "Only JPG, PNG or PDF files are allowed"})
-                if kind == ChatMessage.Kind.TEXT:
-                    attrs["kind"] = ChatMessage.Kind.DOCUMENT if ct == "application/pdf" else ChatMessage.Kind.IMAGE
+                mime_to_kind = {
+                    "image/jpeg": ChatMessage.Kind.IMAGE,
+                    "image/png": ChatMessage.Kind.IMAGE,
+                    "application/pdf": ChatMessage.Kind.DOCUMENT,
+                    "text/plain": ChatMessage.Kind.DOCUMENT,
+                    "application/msword": ChatMessage.Kind.DOCUMENT,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ChatMessage.Kind.DOCUMENT,
+                }
+                ext_to_mime_kind = {
+                    ".jpg": ("image/jpeg", ChatMessage.Kind.IMAGE),
+                    ".jpeg": ("image/jpeg", ChatMessage.Kind.IMAGE),
+                    ".png": ("image/png", ChatMessage.Kind.IMAGE),
+                    ".pdf": ("application/pdf", ChatMessage.Kind.DOCUMENT),
+                    ".txt": ("text/plain", ChatMessage.Kind.DOCUMENT),
+                    ".doc": ("application/msword", ChatMessage.Kind.DOCUMENT),
+                    ".docx": (
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        ChatMessage.Kind.DOCUMENT,
+                    ),
+                }
+                raw_ct = (getattr(file, "content_type", None) or "").split(";")[0].strip().lower()
+                name = (getattr(file, "name", None) or "").lower()
+                ext = f".{name.rsplit('.', 1)[-1]}" if "." in name else ""
+
+                resolved_kind = None
+                if raw_ct in mime_to_kind:
+                    resolved_kind = mime_to_kind[raw_ct]
+                elif ext in ext_to_mime_kind:
+                    resolved_kind = ext_to_mime_kind[ext][1]
+                else:
+                    raise serializers.ValidationError(
+                        {"file": "Allowed: JPG, PNG, JPEG, PDF, TXT, DOC, DOCX (max 5MB)"}
+                    )
+                if kind == ChatMessage.Kind.TEXT or kind in (ChatMessage.Kind.IMAGE, ChatMessage.Kind.DOCUMENT):
+                    attrs["kind"] = resolved_kind
         return attrs
 
     def get_file_url(self, obj):

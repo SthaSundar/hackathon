@@ -13,6 +13,16 @@ class JWTAuthentication(BaseAuthentication):
             return None
 
         token = auth_header.split(" ")[1]
+        
+        # Next.js might send an ID Token or Access Token directly from Google if using Google provider.
+        # ID Tokens have 3 segments. Access tokens from Google might not.
+        # If it's not a valid 3-segment JWT, it's likely a raw Google access token.
+        if token.count('.') != 2:
+            print(f"DEBUG: Token is not a 3-segment JWT (segments: {token.count('.') + 1})")
+            # If it's a raw token, we might need to handle it differently or ignore it
+            # For now, let's just return None so other auth methods can try
+            return None
+
         print(f"DEBUG: Token: {token[:20]}...")
         try:
             secret = getattr(settings, "NEXTAUTH_SECRET", settings.SECRET_KEY)

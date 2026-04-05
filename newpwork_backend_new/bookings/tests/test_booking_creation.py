@@ -10,10 +10,19 @@ from bookings.models import Booking
 from datetime import timedelta
 
 
+def _premium_profile(user):
+    user.display_name = user.display_name or "Named User"
+    user.phone_number = user.phone_number or "9841234567"
+    user.address = (user.address or "").strip() or "Kathmandu, Nepal — full street address for testing."
+    user.phone_verified = True
+    user.is_email_verified = True
+    user.save()
+
+
 class CreateBookingTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.category = ServiceCategory.objects.create(
+        ServiceCategory.objects.create(
             name="Test Category",
             slug="test-category",
             description="Test",
@@ -24,29 +33,38 @@ class CreateBookingTests(TestCase):
             password="pass123",
             role=UserRole.CUSTOMER,
         )
+        _premium_profile(self.customer)
+
         self.provider_a = User.objects.create_user(
             username="provA",
             email="provA@example.com",
             password="pass123",
             role=UserRole.PROVIDER,
         )
+        _premium_profile(self.provider_a)
+
         self.provider_b = User.objects.create_user(
             username="provB",
             email="provB@example.com",
             password="pass123",
             role=UserRole.PROVIDER,
         )
+        _premium_profile(self.provider_b)
+
         self.service_b = Service.objects.create(
             provider=self.provider_b,
-            category=self.category,
-            title="Service B",
-            slug="service-b",
-            description="Test",
-            base_price=Decimal("100.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Professional Wedding Decoration",
+            description="Complete floral decoration for wedding venues in Kathmandu.",
+            base_price=Decimal("15000.00"),
+            pricing_type=Service.PricingType.NEGOTIABLE,
+            is_active=True,
+        )
+        self.service_cheap = Service.objects.create(
+            provider=self.provider_b,
+            title="Small Bouquet",
+            description="Small bouquet under 5k tier.",
+            base_price=Decimal("4000.00"),
+            pricing_type=Service.PricingType.FIXED,
             is_active=True,
         )
 
@@ -71,10 +89,8 @@ class CreateBookingTests(TestCase):
     def test_scheduled_time_required_and_must_be_future(self):
         self.client.force_authenticate(user=self.customer)
         url = reverse("create_booking")
-        # missing scheduled_for
         resp1 = self.client.post(url, {"service": self.service_b.id}, format="json")
         self.assertEqual(resp1.status_code, 400)
-        # past scheduled_for
         past = (timezone.now() - timedelta(hours=1)).isoformat()
         resp2 = self.client.post(url, {"service": self.service_b.id, "scheduled_for": past}, format="json")
         self.assertEqual(resp2.status_code, 400)
@@ -84,12 +100,63 @@ class CreateBookingTests(TestCase):
         self.client.force_authenticate(user=self.customer)
         url = reverse("create_booking")
         slot = timezone.now() + timedelta(hours=3)
-        # First booking ok
         resp = self.client.post(url, {"service": self.service_b.id, "scheduled_for": slot.isoformat()}, format="json")
         self.assertEqual(resp.status_code, 201)
-        # Second booking for same time should conflict
         self.client.force_authenticate(user=self.provider_a)
         resp2 = self.client.post(url, {"service": self.service_b.id, "scheduled_for": slot.isoformat()}, format="json")
         self.assertEqual(resp2.status_code, 409)
         self.assertIn("already taken", resp2.data["detail"])
 
+    def test_premium_booking_requires_complete_profile(self):
+        u = User.objects.create_user(
+            username="bare",
+            email="bare@example.com",
+            password="pass123",
+            role=UserRole.CUSTOMER,
+        )
+        u.is_email_verified = True
+        u.phone_verified = False
+        u.save()
+        self.client.force_authenticate(user=u)
+        url = reverse("create_booking")
+        future = (timezone.now() + timedelta(hours=5)).isoformat()
+        resp = self.client.post(url, {"service": self.service_b.id, "scheduled_for": future}, format="json")
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data.get("code"), "profile_incomplete")
+
+    def test_budget_tier_blocks_without_phone_email_google(self):
+        u = User.objects.create_user(
+            username="nobudget",
+            email="nobudget@example.com",
+            password="pass123",
+            role=UserRole.CUSTOMER,
+        )
+        u.is_email_verified = False
+        u.phone_verified = False
+        u.google_id = ""
+        u.save()
+        self.client.force_authenticate(user=u)
+        url = reverse("create_booking")
+        future = (timezone.now() + timedelta(hours=5)).isoformat()
+        resp = self.client.post(url, {"service": self.service_cheap.id, "scheduled_for": future}, format="json")
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data.get("code"), "budget_tier_requirements")
+
+    def test_optional_company_pan_on_booking(self):
+        self.client.force_authenticate(user=self.customer)
+        url = reverse("create_booking")
+        future = (timezone.now() + timedelta(hours=6)).isoformat()
+        resp = self.client.post(
+            url,
+            {
+                "service": self.service_b.id,
+                "scheduled_for": future,
+                "company_name": "Floriculture Pvt Ltd",
+                "pan": "123456789",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201)
+        b = Booking.objects.get(id=resp.data["id"])
+        self.assertEqual(b.company_name, "Floriculture Pvt Ltd")
+        self.assertEqual(b.pan, "123456789")

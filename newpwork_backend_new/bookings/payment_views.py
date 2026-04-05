@@ -31,12 +31,12 @@ def initiate_payment(request, booking_id: int):
     if booking.status != Booking.Status.COMPLETED:
         return Response({"detail": "Only completed bookings can be paid."}, status=status.HTTP_400_BAD_REQUEST)
     
-    if booking.payment_status == 'paid':
+    if booking.payment_status in (Booking.BookingPaymentStatus.HELD, Booking.BookingPaymentStatus.RELEASED):
         return Response({"detail": "This booking has already been paid."}, status=status.HTTP_400_BAD_REQUEST)
     
     # Calculate amounts
     amount = booking.service.base_price
-    commission_rate = Decimal('0.03')  # 3% commission
+    commission_rate = Decimal('0.10')  # 10% commission
     commission_amount = amount * commission_rate
     provider_amount = amount - commission_amount
     
@@ -77,7 +77,7 @@ def initiate_payment(request, booking_id: int):
             "commission_amount": str(commission_amount),
             "provider_amount": str(provider_amount),
             "transaction_id": payment.transaction_id,
-            "booking": BookingSerializer(booking).data,
+            "booking": BookingSerializer(booking, context={"request": request}).data,
             "stripe_publishable_key": getattr(settings, 'STRIPE_PUBLISHABLE_KEY', None)
         })
         
@@ -141,7 +141,7 @@ def verify_payment(request, payment_id: int):
             
             # Update booking payment status
             booking = payment.booking
-            booking.payment_status = 'paid'
+            booking.payment_status = Booking.BookingPaymentStatus.RELEASED
             booking.amount_paid = payment.amount
             booking.commission_amount = payment.commission_amount
             booking.payment_completed_at = timezone.now()
@@ -165,7 +165,7 @@ def verify_payment(request, payment_id: int):
                     "commission_amount": str(payment.commission_amount),
                     "provider_amount": str(payment.amount - payment.commission_amount)
                 },
-                "booking": BookingSerializer(booking).data
+                "booking": BookingSerializer(booking, context={"request": request}).data
             })
         else:
             # Payment failed or pending
@@ -179,8 +179,15 @@ def verify_payment(request, payment_id: int):
             
             # Update booking payment status
             booking = payment.booking
-            booking.payment_status = 'failed' if payment_intent.status == 'canceled' else 'pending'
-            booking.save()
+            if payment_intent.status == "canceled":
+                booking.payment_status = (
+                    Booking.BookingPaymentStatus.UNPAID
+                    if booking.status == Booking.Status.COMPLETED
+                    else Booking.BookingPaymentStatus.NOT_DUE
+                )
+                booking.save(update_fields=["payment_status"])
+            else:
+                booking.save()
             
             return Response({
                 "detail": f"Payment {payment_intent.status}.",
@@ -254,7 +261,7 @@ def provider_earnings(request):
     completed_bookings = Booking.objects.filter(
         service__provider=user,
         status=Booking.Status.COMPLETED,
-        payment_status='paid'
+        payment_status=Booking.BookingPaymentStatus.RELEASED,
     )
     
     total_earnings = sum(

@@ -32,15 +32,10 @@ class AvailableSlotsTests(TestCase):
         )
         self.service = Service.objects.create(
             provider=self.provider,
-            category=self.category,
-            title="Service",
-            slug="service",
-            description="Test",
-            base_price=Decimal("100.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Standard Floral Maintenance",
+            description="Routine plant care services.",
+            base_price=Decimal("1500.00"),
+            pricing_type=Service.PricingType.FIXED,
             is_active=True,
         )
 

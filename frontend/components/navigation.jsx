@@ -16,7 +16,7 @@ import { User, LogOut, Settings, Briefcase, Calendar } from "lucide-react"
 export default function Navigation() {
     const { data: session, status } = useSession()
     const isBrowser = typeof window !== "undefined"
-    const localToken = isBrowser ? localStorage.getItem("npw_token") : null
+    const localToken = isBrowser ? (localStorage.getItem("npw_token") || session?.accessToken) : null
     const localName = isBrowser ? localStorage.getItem("npw_user_name") : null
     const localEmail = isBrowser ? localStorage.getItem("npw_user_email") : null
 
@@ -31,118 +31,111 @@ export default function Navigation() {
     }
 
     return (
-        <nav className="bg-white shadow-sm border-b sticky top-0 z-50">
+        <nav className="bg-white/90 backdrop-blur-xl shadow-[0_8px_30px_rgb(244,143,177,0.1)] border-b border-primary/10 sticky top-0 z-50 transition-all">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center h-16">
+                <div className="flex justify-between items-center h-24">
                     {/* Logo and Brand */}
                     <div className="flex items-center">
-                        <Link href="/" className="flex items-center space-x-3">
-                            <Image
-                                src="/logo.png"
-                                alt="NepWork"
-                                width={24}
-                                height={24}
-                                className="h-32 w-full"
-                                sizes="contain"
-                            />
+                        <Link href="/" className="flex items-center group">
+                            <span className="text-3xl font-black tracking-tighter text-foreground group-hover:text-primary transition-colors">
+                                Nep<span className="text-primary">Work</span>
+                            </span>
                         </Link>
                     </div>
 
                     {/* Navigation Links */}
-                    <div className="hidden md:flex items-center space-x-8">
+                    <div className="hidden md:flex items-center space-x-12">
                         <Link
                             href="/"
-                            className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
+                            className="text-foreground/60 hover:text-primary px-1 py-2 text-sm font-black uppercase tracking-widest transition-all relative group"
                         >
                             Home
+                            <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-primary transition-all group-hover:w-full" />
                         </Link>
                         <Link
                             href="/services"
-                            className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
+                            className="text-foreground/60 hover:text-primary px-1 py-2 text-sm font-black uppercase tracking-widest transition-all relative group"
                         >
-                            Services
+                            Browse Flowers
+                            <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-primary transition-all group-hover:w-full" />
                         </Link>
                         <Link
-                            href="/categories"
-                            className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
+                            href="/bulk-board"
+                            className="text-foreground/60 hover:text-primary px-1 py-2 text-sm font-black uppercase tracking-widest transition-all relative group"
                         >
-                            Categories
+                            Bulk Board
+                            <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-primary transition-all group-hover:w-full" />
                         </Link>
                         <Link
                             href="/about"
-                            className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium transition-colors"
+                            className="text-foreground/60 hover:text-primary px-1 py-2 text-sm font-black uppercase tracking-widest transition-all relative group"
                         >
                             About
+                            <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-primary transition-all group-hover:w-full" />
                         </Link>
                     </div>
 
                     {/* User Actions */}
-                    <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-8">
                         {status === "loading" ? (
-                            <div className="animate-pulse bg-gray-200 h-8 w-20 rounded"></div>
+                            <div className="animate-pulse bg-primary/5 h-10 w-24 rounded-full"></div>
                         ) : (session || localToken) ? (
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="flex items-center space-x-2">
-                                        <Image
-                                            src={session?.user?.image || "/logo.png"}
-                                            alt="Profile"
-                                            width={24}
-                                            height={24}
-                                            className="h-6 w-6 rounded-full"
-                                        />
-                                        <span className="hidden sm:block text-sm font-medium">
+                                    <Button variant="ghost" className="flex items-center space-x-4 hover:bg-primary/5 rounded-[20px] px-4 py-6 border border-transparent hover:border-primary/10 transition-all">
+                                        <div className="h-10 w-10 rounded-2xl bg-primary/10 flex items-center justify-center overflow-hidden border-2 border-white shadow-lg rotate-3 group-hover:rotate-0 transition-transform">
+                                            <Image
+                                                src={session?.user?.image || "/logo.png"}
+                                                alt="Profile"
+                                                width={40}
+                                                height={40}
+                                                className="h-full w-full object-cover"
+                                            />
+                                        </div>
+                                        <span className="hidden sm:block text-sm font-black uppercase tracking-tighter text-foreground">
                                             {session?.user?.name || localName || "Account"}
                                         </span>
                                     </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-56">
-                                    <div className="flex items-center justify-start gap-2 p-2">
-                                        <div className="flex flex-col space-y-1 leading-none">
-                                            <p className="font-medium">{session?.user?.name || localName || "Account"}</p>
-                                            <p className="w-[200px] truncate text-sm text-muted-foreground">
-                                                {session?.user?.email || localEmail || ""}
-                                            </p>
-                                        </div>
+                                <DropdownMenuContent align="end" className="w-72 p-3 rounded-[32px] shadow-2xl border-primary/10 bg-white/95 backdrop-blur-md">
+                                    <div className="flex flex-col space-y-1 p-4 bg-primary/5 rounded-2xl mb-2">
+                                        <p className="font-black text-foreground tracking-tight">{session?.user?.name || localName || "Account"}</p>
+                                        <p className="truncate text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                                            {session?.user?.email || localEmail || ""}
+                                        </p>
                                     </div>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/dashboard" className="cursor-pointer">
-                                            <User className="mr-2 h-4 w-4" />
-                                            Dashboard
+                                    <DropdownMenuSeparator className="my-2 bg-primary/5" />
+                                    <DropdownMenuItem asChild className="rounded-xl focus:bg-primary/10 focus:text-primary cursor-pointer py-3 font-bold text-sm">
+                                        <Link href="/dashboard">
+                                            <User className="mr-3 h-4 w-4" />
+                                            My Dashboard
                                         </Link>
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/dashboard?tab=services" className="cursor-pointer">
-                                            <Briefcase className="mr-2 h-4 w-4" />
-                                            My Services
+                                    <DropdownMenuItem asChild className="rounded-xl focus:bg-primary/10 focus:text-primary cursor-pointer py-3 font-bold text-sm">
+                                        <Link href="/dashboard?tab=services">
+                                            <Briefcase className="mr-3 h-4 w-4" />
+                                            Service Listings
                                         </Link>
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/dashboard?tab=bookings" className="cursor-pointer">
-                                            <Calendar className="mr-2 h-4 w-4" />
-                                            My Bookings
+                                    <DropdownMenuItem asChild className="rounded-xl focus:bg-primary/10 focus:text-primary cursor-pointer py-3 font-bold text-sm">
+                                        <Link href="/dashboard?tab=bookings">
+                                            <Calendar className="mr-3 h-4 w-4" />
+                                            Bookings
                                         </Link>
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/profile" className="cursor-pointer">
-                                            <Settings className="mr-2 h-4 w-4" />
-                                            Settings
-                                        </Link>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer">
-                                        <LogOut className="mr-2 h-4 w-4" />
+                                    <DropdownMenuSeparator className="my-2 bg-primary/5" />
+                                    <DropdownMenuItem onClick={handleSignOut} className="rounded-xl focus:bg-destructive/5 focus:text-destructive cursor-pointer py-3 font-bold text-sm text-destructive">
+                                        <LogOut className="mr-3 h-4 w-4" />
                                         Sign Out
                                     </DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         ) : (
-                            <div className="flex items-center space-x-3">
-                                <Button asChild variant="outline" className="border-blue-600 text-blue-600 hover:bg-blue-50">
+                            <div className="flex items-center space-x-6">
+                                <Button asChild variant="ghost" className="text-foreground/60 hover:text-primary hover:bg-primary/5 rounded-full px-8 font-black uppercase tracking-widest text-xs transition-all">
                                     <Link href="/auth/signin">Sign In</Link>
                                 </Button>
-                                <Button asChild className="bg-blue-600 text-white hover:bg-blue-700">
+                                <Button asChild className="bg-primary text-white hover:bg-primary/90 rounded-[20px] px-10 py-6 shadow-xl shadow-primary/20 hover:shadow-primary/30 transition-all font-black uppercase tracking-widest text-xs scale-105">
                                     <Link href="/auth/signin">Get Started</Link>
                                 </Button>
                             </div>

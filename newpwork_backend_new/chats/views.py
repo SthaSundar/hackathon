@@ -9,6 +9,8 @@ from accounts.models import UserRole
 from services.service_models import Service
 from bookings.models import Booking
 from .models import ChatThread, ChatMessage, ChatAccessLog
+
+from accounts.response_time import update_provider_avg_response_hours
 from .serializers import ChatThreadSerializer, ChatMessageSerializer
 
 
@@ -79,6 +81,17 @@ def post_message(request, thread_id: int):
     serializer = ChatMessageSerializer(data=data, context={"thread": thread, "request": request})
     if serializer.is_valid():
         msg = serializer.save(sender=user)
+        if (
+            thread.thread_type == ChatThread.Type.BOOKING
+            and thread.booking_id
+            and user.id == thread.provider_id
+        ):
+            prior = ChatMessage.objects.filter(thread=thread, sender_id=thread.provider_id).exclude(pk=msg.pk).count()
+            if prior == 0:
+                booking = thread.booking
+                if booking:
+                    update_provider_avg_response_hours(thread.provider, booking.created_at, timezone.now())
+                ChatMessage.objects.filter(pk=msg.pk).update(is_first_response=True)
         return Response(ChatMessageSerializer(msg, context={"request": request}).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

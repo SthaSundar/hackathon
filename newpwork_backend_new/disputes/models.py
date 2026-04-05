@@ -14,6 +14,7 @@ class Dispute(models.Model):
     class Category(models.TextChoices):
         PAYMENT = "payment", "Payment"
         SERVICE_QUALITY = "service_quality", "Service Quality"
+        BEHAVIOR = "behavior", "Behavior"
         ABUSE = "abuse", "Abuse"
         OTHER = "other", "Other"
 

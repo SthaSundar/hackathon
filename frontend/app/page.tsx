@@ -5,10 +5,12 @@ import FeaturedServices from "@/components/featured-services";
 import HowItWorks from "@/components/how-it-works";
 import Loading from "@/components/loading";
 import Navigation from "@/components/navigation"
+import SeasonalBanner from "@/components/SeasonalBanner";
 
 export default function HomePage() {
   return (
     <main className="min-h-screen">
+      <SeasonalBanner />
       <Hero/>
       <Suspense fallback={<Loading />}>
         <ServiceCategories />

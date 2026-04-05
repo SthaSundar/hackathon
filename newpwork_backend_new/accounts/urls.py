@@ -4,7 +4,8 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .views import sync_user, stats, user_stats, login, register, submit_kyc, get_kyc_status, list_pending_kyc, verify_kyc, token_by_email, list_users, delete_user, set_user_active, list_kyc, list_notifications, mark_notification_read, mark_all_notifications_read, unread_notifications_count, user_status
+from .views import sync_user, stats, admin_stats, user_stats, login, register, client_register_start, client_register_confirm, patch_my_profile, submit_kyc, get_kyc_status, list_pending_kyc, verify_kyc, token_by_email, list_users, delete_user, set_user_active, list_kyc, list_notifications, mark_notification_read, mark_all_notifications_read, unread_notifications_count, user_status, list_providers, toggle_featured
+from marketplace import views as platform_views
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -39,11 +40,15 @@ urlpatterns = [
     path("", accounts_home, name="accounts_home"),
     path("login/", login, name="login"),
     path("register/", register, name="register"),
+    path("register/client/start/", client_register_start, name="client_register_start"),
+    path("register/client/confirm/", client_register_confirm, name="client_register_confirm"),
+    path("me/profile/", patch_my_profile, name="patch_my_profile"),
     path("token-by-email/", token_by_email, name="token_by_email"),
     path("sync/", sync_user, name="sync_user"),
     path("stats/", stats, name="stats"),
     path("user-stats/", user_stats, name="user_stats"),
     path("user-status/", user_status, name="user_status"),
+    path("admin-stats/", admin_stats, name="admin_stats"),
     path("test/", test_endpoint, name="test_endpoint"),
     path("kyc/submit/", submit_kyc, name="submit_kyc"),
     path("kyc/status/", get_kyc_status, name="get_kyc_status"),
@@ -57,4 +62,22 @@ urlpatterns = [
     path("notifications/<int:notification_id>/read/", mark_notification_read, name="mark_notification_read"),
     path("notifications/read-all/", mark_all_notifications_read, name="mark_all_notifications_read"),
     path("notifications/unread-count/", unread_notifications_count, name="unread_notifications_count"),
+    
+    # Floriculture Marketplace endpoints
+    path("providers/", list_providers, name="list_providers"),
+    path("providers/<int:user_id>/", views.provider_detail, name="provider_detail"),
+    path("providers/<int:user_id>/toggle-featured/", toggle_featured, name="toggle_featured"),
+    path("providers/<int:user_id>/availability/", platform_views.provider_availability),
+    path(
+        "providers/<int:user_id>/availability/<str:ad_date>/",
+        platform_views.provider_availability_delete,
+    ),
+    path(
+        "providers/<int:user_id>/freshness-guarantee/",
+        platform_views.provider_freshness_guarantee_toggle,
+    ),
+    path(
+        "admin/freshness-reports/<int:report_id>/confirm/",
+        platform_views.admin_confirm_freshness_report,
+    ),
 ]

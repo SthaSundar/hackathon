@@ -38,12 +38,11 @@ const handler = NextAuth({
     // Add JWT custom fields
     async jwt({ token, user, account }) {
       if (account && user) {
-        token.accessToken = account.access_token;
         token.email = user.email;
         token.name = user.name;
         token.picture = user.image;
         
-        // Get role from backend database (source of truth)
+        // Exchange Google login info for a backend-signed JWT
         try {
           const tokenRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/accounts/token-by-email/`, {
             method: "POST",
@@ -52,8 +51,9 @@ const handler = NextAuth({
           });
           if (tokenRes.ok) {
             const data = await tokenRes.json();
-            // Use role from backend database
+            // Use role and JWT from backend database
             token.role = data.user?.role || "customer";
+            token.backendToken = data.token;
           } else {
             // Fallback: only check admin email if backend fails
             const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
@@ -71,7 +71,7 @@ const handler = NextAuth({
 
     // Add custom fields to session object
     async session({ session, token }) {
-      session.accessToken = token.accessToken;
+      session.accessToken = token.backendToken;
       session.role = token.role || "customer";
       session.user = {
         email: token.email,

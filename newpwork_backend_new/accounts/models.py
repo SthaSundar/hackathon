@@ -8,6 +8,11 @@ class UserRole(models.TextChoices):
     PROVIDER = "provider", _("Provider")
     ADMIN = "admin", _("Admin")
 
+class ProviderCategory(models.TextChoices):
+    FLOWER_VENDOR = "flower_vendor", _("Flower Vendor")
+    EVENT_DECORATOR = "event_decorator", _("Event Decorator")
+    NURSERY_AMC = "nursery_amc", _("Nursery / Office AMC")
+
 class User(AbstractUser):
     """
     Custom user model for marketplace authentication and profiles.
@@ -17,16 +22,37 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=20, blank=True)
     role = models.CharField(max_length=20, choices=UserRole.choices, default=UserRole.CUSTOMER)
+    category = models.CharField(
+        max_length=30, 
+        choices=ProviderCategory.choices, 
+        default=ProviderCategory.FLOWER_VENDOR,
+        null=True,
+        blank=True
+    )
+    is_featured = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
+    phone_verified = models.BooleanField(
+        default=False,
+        help_text="True after client OTP registration or manual verification; used for budget-tier bookings.",
+    )
 
     # Optional profile fields
     display_name = models.CharField(max_length=150, blank=True)
     avatar_url = models.URLField(blank=True)
     bio = models.TextField(blank=True)
+    address = models.TextField(blank=True, help_text="Used for high-tier (Rs 5,000+) booking eligibility.")
 
     # OAuth fields (for Google login)
     google_id = models.CharField(max_length=255, blank=True, null=True, unique=True)
     access_token = models.CharField(max_length=512, blank=True, null=True)
+
+    freshness_guarantee = models.BooleanField(
+        default=False,
+        help_text="Provider opted in to 'fresh flowers guaranteed' badge.",
+    )
+    freshness_violations = models.PositiveSmallIntegerField(default=0)
+    avg_response_hours = models.FloatField(null=True, blank=True)
+    total_response_count = models.PositiveIntegerField(default=0)
 
     REQUIRED_FIELDS = ["email"]
 
@@ -66,6 +92,18 @@ class KYCVerification(models.Model):
     
     # Verification status
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    category = models.CharField(
+        max_length=30, 
+        choices=ProviderCategory.choices, 
+        null=True, 
+        blank=True
+    )
+    trade_certificate = models.FileField(
+        upload_to="kyc/certificates/", 
+        blank=True, 
+        null=True,
+        help_text="Trade or business certificate"
+    )
     admin_notes = models.TextField(blank=True, help_text="Admin notes for approval/rejection")
     verified_at = models.DateTimeField(null=True, blank=True)
     verified_by = models.ForeignKey(
@@ -91,6 +129,29 @@ class KYCVerification(models.Model):
         return self.status == self.Status.APPROVED
 
 
+class CustomerBookingIdentity(models.Model):
+    """One-time identity details required before a customer can create a booking."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="booking_identity",
+    )
+    full_name = models.CharField(max_length=150)
+    address = models.TextField()
+    phone_number = models.CharField(max_length=20)
+    citizenship = models.FileField(upload_to="booking_identity/citizenship/")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Customer booking identity"
+        verbose_name_plural = "Customer booking identities"
+
+    def __str__(self) -> str:
+        return f"Booking identity for {self.user.email}"
+
+
 class Notification(models.Model):
     class Type(models.TextChoices):
         KYC_SUBMITTED = "kyc_submitted", _("KYC Submitted")
@@ -99,6 +160,9 @@ class Notification(models.Model):
         BOOKING_COMPLETED = "booking_completed", _("Booking Completed")
         BOOKING_DECLINED = "booking_declined", _("Booking Declined")
         BOOKING_REQUESTED = "booking_requested", _("Booking Requested")
+        PAYMENT_HELD = "payment_held", _("Payment Held")
+        PAYMENT_RELEASED = "payment_released", _("Payment Released")
+        DISPUTE_OPENED = "dispute_opened", _("Dispute Opened")
         PASSWORD_CHANGED = "password_changed", _("Password Changed")
         USERNAME_CHANGED = "username_changed", _("Username Changed")
         PROFILE_UPDATED = "profile_updated", _("Profile Updated")

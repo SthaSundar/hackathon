@@ -30,28 +30,18 @@ class MyBookingsViewTests(TestCase):
         )
         self.service_by_provider = Service.objects.create(
             provider=self.provider,
-            category=self.category,
-            title="Provider Service",
-            slug="provider-service",
-            description="Test",
-            base_price=Decimal("100.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Fresh Cut Rose Supply",
+            description="Daily fresh roses from our local farm.",
+            base_price=Decimal("50.00"),
+            pricing_type=Service.PricingType.FIXED,
             is_active=True,
         )
         self.service_by_customer = Service.objects.create(
             provider=self.customer,
-            category=self.category,
-            title="Customer Service",
-            slug="customer-service",
-            description="Test",
-            base_price=Decimal("50.00"),
-            pricing_type="fixed",
-            location="KT",
-            certificates="",
-            degrees="",
+            title="Custom Bouquet Design",
+            description="Bespoke floral arrangements.",
+            base_price=Decimal("1200.00"),
+            pricing_type=Service.PricingType.NEGOTIABLE,
             is_active=True,
         )
         self.booking_allowed = Booking.objects.create(

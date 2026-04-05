@@ -10,8 +10,9 @@ export default function RoleGuard({ allow = ["customer", "provider", "admin"], f
 
     useEffect(() => {
         if (status === "loading") return
-        const localRole = (typeof window !== "undefined" && localStorage.getItem("npw_role")) || "customer"
-        const hasLocalToken = typeof window !== "undefined" && !!localStorage.getItem("npw_token")
+        const isBrowser = typeof window !== "undefined"
+        const localRole = isBrowser ? localStorage.getItem("npw_role") : "customer"
+        const hasLocalToken = isBrowser && (!!localStorage.getItem("npw_token") || !!session?.accessToken)
         const role = session?.role || localRole
         if ((!session && !hasLocalToken) || !allow.includes(role)) {
             router.replace(fallback)
@@ -19,8 +20,9 @@ export default function RoleGuard({ allow = ["customer", "provider", "admin"], f
     }, [session, status, router, allow, fallback])
 
     if (status === "loading") return null
-    const localRole = (typeof window !== "undefined" && localStorage.getItem("npw_role")) || "customer"
-    const hasLocalToken = typeof window !== "undefined" && !!localStorage.getItem("npw_token")
+    const isBrowser = typeof window !== "undefined"
+    const localRole = isBrowser ? localStorage.getItem("npw_role") : "customer"
+    const hasLocalToken = isBrowser && (!!localStorage.getItem("npw_token") || !!session?.accessToken)
     const role = session?.role || localRole
     if ((!session && !hasLocalToken) || !allow.includes(role)) return null
     return children

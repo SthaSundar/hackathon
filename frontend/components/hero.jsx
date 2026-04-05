@@ -9,52 +9,42 @@ export default function Hero() {
 
     return (
         <section className="relative min-h-[600px] flex items-center justify-center overflow-hidden">
-            {/* Background Image */}
+            {/* Background Image with Proper Aspect Ratio */}
             <div className="absolute inset-0 z-0">
                 <Image
-                    src="/Background.png"
-                    alt="NepWork Background"
+                    src="/banner.png"
+                    alt="NepWork Floriculture Marketplace"
                     fill
-                    className="object-contain md:object-cover object-center"
+                    className="object-cover object-center brightness-90"
                     priority
                 />
-                <div className="absolute inset-0 bg-gradient-to-b from-blue-900/30 via-blue-800/20 to-blue-900/30" />
+                {/* Soft Gradient Overlay for Readability */}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-background/80" />
             </div>
 
             {/* Content */}
-            <div className="relative z-10 text-center text-white px-4 max-w-4xl mx-auto">
-                <div className="mb-8">
-                    <Image
-                        src="/logo.png"
-                        alt="NepWork Logo"
-                        width={120}
-                        height={120}
-                        className="mx-auto mb-6"
-                    />
-                </div>
-
-                <h1 className="text-4xl md:text-6xl font-bold mb-6">
-                    Connect with the Best
-                    <span className="block text-blue-300">Freelancers & Service Providers</span>
+            <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">
+                <h1 className="text-5xl md:text-7xl font-black mb-6 text-white drop-shadow-2xl tracking-tight">
+                    From Farm to Function
+                    <span className="block text-primary mt-2 drop-shadow-none bg-white/90 backdrop-blur-md px-6 py-2 rounded-3xl inline-block">Fresh Flowers, Smarter Connections</span>
                 </h1>
 
-                <p className="text-xl md:text-2xl mb-8 text-blue-100 max-w-2xl mx-auto">
-                    Find skilled professionals for your projects or showcase your expertise to potential clients.
-                    Join NepWork today and build meaningful connections.
+                <p className="text-xl md:text-2xl mb-12 text-white font-bold drop-shadow-md max-w-2xl mx-auto leading-relaxed">
+                    Nepal's dedicated  marketplace for flower farmers, decorators, and floriculture professionals.
                 </p>
 
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                <div className="flex flex-col sm:flex-row gap-6 justify-center">
                     {session ? (
-                        <Button asChild size="lg" className="text-lg px-8 py-3">
+                        <Button asChild size="lg" className="text-lg px-12 py-8 rounded-[24px] shadow-2xl hover:shadow-primary/40 transition-all font-black uppercase tracking-widest scale-105">
                             <Link href="/dashboard">Go to Dashboard</Link>
                         </Button>
                     ) : (
-                        <Button asChild size="lg" className="text-lg px-8 py-3">
+                        <Button asChild size="lg" className="text-lg px-12 py-8 rounded-[24px] shadow-2xl hover:shadow-primary/40 transition-all font-black uppercase tracking-widest scale-105">
                             <Link href="/auth/signin">Get Started</Link>
                         </Button>
                     )}
-                    <Button asChild variant="outline" size="lg" className="text-lg px-8 py-3 border-white text-white hover:bg-white hover:text-blue-600">
-                        <Link href="/services">Browse Services</Link>
+                    <Button asChild variant="outline" size="lg" className="text-lg px-12 py-8 rounded-[24px] border-white bg-white/10 backdrop-blur-md text-white hover:bg-white hover:text-primary transition-all font-black uppercase tracking-widest">
+                        <Link href="/services">Browse Flowers</Link>
                     </Button>
                 </div>
             </div>

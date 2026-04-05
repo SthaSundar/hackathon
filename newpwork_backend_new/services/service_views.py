@@ -21,11 +21,14 @@ def list_services(request):
     queryset = Service.objects.filter(is_active=True)
     category = request.query_params.get("category")
     search = request.query_params.get("q")
+    provider_id = request.query_params.get("provider")
     
     if category:
         queryset = queryset.filter(category__slug=category)
     if search:
         queryset = queryset.filter(title__icontains=search)
+    if provider_id:
+        queryset = queryset.filter(provider_id=provider_id)
     
     # Annotate with priority: rating is primary, then certificates/degrees
     queryset = queryset.annotate(
@@ -41,8 +44,7 @@ def list_services(request):
             )
         ),
         has_certificates_or_degrees=Case(
-            When(certificates__isnull=False, certificates__gt='', then=1),
-            When(degrees__isnull=False, degrees__gt='', then=1),
+            When(provider__kyc_verification__trade_certificate__isnull=False, provider__kyc_verification__trade_certificate__gt='', then=1),
             default=0,
             output_field=IntegerField()
         )
@@ -52,7 +54,7 @@ def list_services(request):
         '-created_at'  # Newest last
     )
     
-    serializer = ServiceSerializer(queryset, many=True)
+    serializer = ServiceSerializer(queryset, many=True, context={"request": request})
     return Response(serializer.data)
 
 
@@ -96,6 +98,7 @@ def create_service(request):
             "kyc_status": kyc_status,
             "user_email": user.email
         }, status=status.HTTP_403_FORBIDDEN)
+    
     data = request.data.copy()
     
     # Log received data for debugging
@@ -104,20 +107,32 @@ def create_service(request):
     logger.info(f"Title: {data.get('title')}")
     logger.info(f"Base price: {data.get('base_price')}")
     
-    # Handle category - it might come as string, need to convert to int
+    # Handle category - can be ID (int) or slug (str)
     if 'category' in data:
+        from .category_models import ServiceCategory
+        category_value = data.get('category')
         try:
-            category_value = data.get('category')
-            if isinstance(category_value, str):
-                # Try to convert string to int
-                category_value = int(category_value)
-            data['category'] = category_value
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid category value: {data.get('category')}, error: {e}")
+            if isinstance(category_value, str) and not category_value.isdigit():
+                # It's a slug like 'flower_vendor'
+                cat_obj = ServiceCategory.objects.filter(
+                    models.Q(slug__iexact=category_value) | 
+                    models.Q(name__iexact=category_value.replace('_', ' ')) |
+                    models.Q(name__iexact=category_value.replace('-', ' '))
+                ).first()
+                
+                if cat_obj:
+                    data['category'] = cat_obj.id
+                else:
+                    raise ServiceCategory.DoesNotExist(f"Category '{category_value}' not found")
+            else:
+                # It's an ID as string or int
+                data['category'] = int(category_value)
+        except (ServiceCategory.DoesNotExist, ValueError, TypeError) as e:
+            logger.error(f"Invalid category value: {category_value}, error: {e}")
             return Response({
-                "detail": "Invalid category. Please select a valid category.",
+                "detail": "Invalid category. Please select a valid category from the list.",
                 "category_error": str(e),
-                "received_category": str(data.get('category'))
+                "received_category": str(category_value)
             }, status=status.HTTP_400_BAD_REQUEST)
     
     # Handle base_price - ensure it's a valid decimal
@@ -198,10 +213,13 @@ def update_service(request, service_id: int):
 def service_detail(request, service_id: int):
     """Public service detail with reviews."""
     try:
-        service = Service.objects.get(id=service_id, is_active=True)
+        service = (
+            Service.objects.select_related("provider", "category", "provider__kyc_verification")
+            .get(id=service_id, is_active=True)
+        )
     except Service.DoesNotExist:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-    serializer = ServiceSerializer(service)
+    serializer = ServiceSerializer(service, context={"request": request})
     return Response(serializer.data)
 
 

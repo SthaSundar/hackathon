@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.google',
     'chats',
     'disputes',
+    'marketplace',
 ]
 
 
@@ -241,3 +242,6 @@ CURRENCY_DECIMAL_PLACES = 2  # Amounts are in Rupees with 2 decimal places
 
 # NextAuth configuration for JWT authentication
 NEXTAUTH_SECRET = os.getenv('NEXTAUTH_SECRET', '643927c388af46671581d5748192b212c18a641aee9f218254a01beaf9e1245e')
+
+# eSewa redirect targets (Next.js app)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")

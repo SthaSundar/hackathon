@@ -6,8 +6,9 @@ import { useEffect, useState, Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Loader2, Eye, EyeOff } from "lucide-react"
+import { Loader2, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
 import Image from "next/image"
+import Link from "next/link"
 
 function SignInForm() {
   const router = useRouter()
@@ -31,8 +32,15 @@ function SignInForm() {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    username: ""
+    username: "",
+    category: "flower_vendor"
   })
+
+  const categories = [
+    { id: "flower_vendor", label: "Flower Vendor", description: "Wholesale/retail cut flower sellers & farmers" },
+    { id: "event_decorator", label: "Event Decorator", description: "Decorators for weddings, receptions, events" },
+    { id: "nursery_amc", label: "Nursery / Office AMC", description: "Nurseries offering office plant care contracts" }
+  ]
 
   useEffect(() => {
     const checkSession = async () => {
@@ -56,6 +64,9 @@ function SignInForm() {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("npw_role", role)
+        if (role === "provider") {
+          localStorage.setItem("npw_pending_category", formData.category)
+        }
       }
       const redirectRole = role === "customer" ? "client" : role
       await signIn("google", {
@@ -123,7 +134,13 @@ function SignInForm() {
       
       const body = isLogin
         ? { email: formData.email, password: formData.password }
-        : { email: formData.email, password: formData.password, username: formData.username, role }
+        : { 
+            email: formData.email, 
+            password: formData.password, 
+            username: formData.username, 
+            role,
+            category: role === "provider" ? formData.category : null
+          }
 
       let res = await fetch(url, {
         method: "POST",
@@ -144,6 +161,7 @@ function SignInForm() {
                 email: formData.email,
                 username: formData.username,
                 role,
+                category: role === "provider" ? formData.category : null
               })
             })
             if (syncAdd.ok) {
@@ -165,7 +183,7 @@ function SignInForm() {
         setIsLoading(false)
         setTimeout(() => {
           setIsLogin(true)
-          setFormData({ email: formData.email, password: "", username: "" })
+          setFormData({ email: formData.email, password: "", username: "", category: "flower_vendor" })
           setSuccess("")
           setPasswordValidation({
             length: false,
@@ -191,31 +209,33 @@ function SignInForm() {
 
       // Sync with NextAuth for session management with actual role from backend
       try {
-        const syncRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/accounts/sync/`, {
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/accounts/sync/`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             email: data.user.email,
             username: data.user.name || formData.username,
-            role: actualRole // Use actual role from backend
+            role: actualRole, // Use actual role from backend
+            category: data.user.category || (role === "provider" ? formData.category : null)
           }),
         })
-        if (!syncRes.ok) {
-          console.warn("Sync failed but continuing:", await syncRes.text())
-        }
       } catch (syncError) {
         console.warn("Sync error (non-critical):", syncError)
       }
 
-      // Redirect based on actual role from backend
+      setSuccess("Successfully signed in!")
+      
       const redirectRole = actualRole === "customer" ? "client" : actualRole
-      if (redirectRole === "client") {
-        window.location.href = "/"
-      } else if (redirectRole === "admin") {
-        window.location.href = "/admin"
-      } else {
-        window.location.href = `/dashboard?role=${redirectRole}`
-      }
+      setTimeout(() => {
+        if (actualRole === "customer") {
+          window.location.href = "/"
+        } else if (actualRole === "admin") {
+          window.location.href = "/admin"
+        } else {
+          window.location.href = `/dashboard?role=${redirectRole}`
+        }
+      }, 1000)
+
     } catch (err) {
       setError(err.message)
       setIsLoading(false)
@@ -223,168 +243,186 @@ function SignInForm() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-50 via-indigo-50 to-blue-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div className="text-center">
-          <Image
-            src="/logo.png"
-            alt="NepWork Logo"
-            width={80}
-            height={80}
-            className="mx-auto mb-4"
-          />
-          <h2 className="text-3xl font-bold text-gray-900">
-            Welcome to NepWork
-          </h2>
-          <p className="mt-2 text-sm text-blue-700">
-            {role === "provider" 
-              ? "Join as a service provider and showcase your skills"
-              : "Find the best service providers for your needs"
-            }
-          </p>
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 py-12">
+      <Card className="w-full max-w-lg shadow-2xl rounded-3xl border-primary/10 overflow-hidden">
+        <div className="bg-primary/5 p-8 text-center border-b border-primary/10">
+          <CardTitle className="text-3xl font-bold text-foreground">
+            {isLogin ? "Welcome Back" : `Join as ${role === 'provider' ? 'Provider' : 'Client'}`}
+          </CardTitle>
+          <CardDescription className="text-muted-foreground mt-2">
+            {isLogin 
+              ? "Access your account to manage your floral business" 
+              : "Start your journey in Nepal's floriculture marketplace"}
+          </CardDescription>
+          
+          <div className="mt-6 p-4 bg-primary/10 rounded-2xl border border-primary/20">
+            <p className="text-sm font-medium text-foreground">
+              Want to join as a {role === "provider" ? "client" : "service provider"}?{" "}
+              <a 
+                href={`/auth/signin?role=${role === "provider" ? "client" : "provider"}`}
+                className="text-primary hover:underline font-bold"
+              >
+                Switch here
+              </a>
+            </p>
+          </div>
         </div>
 
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-xl">
-              {isLogin ? "Sign in" : "Create account"}
-            </CardTitle>
-            <CardDescription>
-              {role === "provider" 
-                ? "Connect with clients and grow your business"
-                : "Discover and book amazing services"
-              }
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
-                {error}
-              </div>
-            )}
-            {success && (
-              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded text-sm">
-                {success}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {!isLogin && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Username
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder="username"
-                    value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                    required={!isLogin}
-                  />
-                </div>
-              )}
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
-                </label>
+        <CardContent className="p-8">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {!isLogin && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground/70 ml-1">Username</label>
                 <Input
-                  type="email"
-                  placeholder="your@email.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  required
+                  placeholder="janesmith"
+                  className="rounded-xl border-primary/20 focus:border-primary focus:ring-primary/20 h-12"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  required={!isLogin}
                 />
               </div>
+            )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Password
-                  {!isLogin && (
-                    <span className="text-xs text-gray-500 ml-1">(8+ chars, uppercase, lowercase, number, special char)</span>
-                  )}
-                </label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={formData.password}
-                    onChange={handlePasswordChange}
-                    required
-                    minLength={isLogin ? 6 : 8}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(v => !v)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                  >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-                {!isLogin && formData.password && (
-                  <div className="mt-2 text-xs space-y-1">
-                    <div className={passwordValidation.length ? "text-green-600" : "text-gray-500"}>
-                      {passwordValidation.length ? "✓" : "○"} At least 8 characters
-                    </div>
-                    <div className={passwordValidation.uppercase ? "text-green-600" : "text-gray-500"}>
-                      {passwordValidation.uppercase ? "✓" : "○"} One uppercase letter
-                    </div>
-                    <div className={passwordValidation.lowercase ? "text-green-600" : "text-gray-500"}>
-                      {passwordValidation.lowercase ? "✓" : "○"} One lowercase letter
-                    </div>
-                    <div className={passwordValidation.number ? "text-green-600" : "text-gray-500"}>
-                      {passwordValidation.number ? "✓" : "○"} One number
-                    </div>
-                    <div className={passwordValidation.special ? "text-green-600" : "text-gray-500"}>
-                      {passwordValidation.special ? "✓" : "○"} One special character
-                    </div>
-                  </div>
-                )}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground/70 ml-1">Email Address</label>
+              <Input
+                type="email"
+                placeholder="name@example.com"
+                className="rounded-xl border-primary/20 focus:border-primary focus:ring-primary/20 h-12"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground/70 ml-1">Password</label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  className="rounded-xl border-primary/20 focus:border-primary focus:ring-primary/20 h-12 pr-10"
+                  value={formData.password}
+                  onChange={handlePasswordChange}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
 
-              <Button
-                type="submit"
-                disabled={isLoading}
-                className="w-full"
-                size="lg"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {isLogin ? "Signing in..." : "Creating account..."}
-                  </>
-                ) : (
-                  isLogin ? "Sign In" : "Create Account"
-                )}
-              </Button>
-            </form>
+              {!isLogin && formData.password.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 mt-3 p-3 bg-muted rounded-xl text-[11px]">
+                  <div className={`flex items-center gap-1.5 ${passwordValidation.length ? 'text-secondary-foreground' : 'text-muted-foreground'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${passwordValidation.length ? 'bg-secondary' : 'bg-muted-foreground/30'}`} />
+                    8+ characters
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${passwordValidation.uppercase ? 'text-secondary-foreground' : 'text-muted-foreground'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${passwordValidation.uppercase ? 'bg-secondary' : 'bg-muted-foreground/30'}`} />
+                    Uppercase letter
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${passwordValidation.lowercase ? 'text-secondary-foreground' : 'text-muted-foreground'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${passwordValidation.lowercase ? 'bg-secondary' : 'bg-muted-foreground/30'}`} />
+                    Lowercase letter
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${passwordValidation.number ? 'text-secondary-foreground' : 'text-muted-foreground'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${passwordValidation.number ? 'bg-secondary' : 'bg-muted-foreground/30'}`} />
+                    One number
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${passwordValidation.special ? 'text-secondary-foreground' : 'text-muted-foreground'}`}>
+                    <div className={`h-1.5 w-1.5 rounded-full ${passwordValidation.special ? 'bg-secondary' : 'bg-muted-foreground/30'}`} />
+                    Special character
+                  </div>
+                </div>
+              )}
+            </div>
 
-            <div className="relative">
+            {!isLogin && role === "provider" && (
+              <div className="space-y-4 pt-2">
+                <label className="text-sm font-bold text-foreground">Select Your Category</label>
+                <div className="grid grid-cols-1 gap-3">
+                  {categories.map((cat) => (
+                    <div
+                      key={cat.id}
+                      onClick={() => setFormData({ ...formData, category: cat.id })}
+                      className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-4 ${
+                        formData.category === cat.id
+                          ? "border-primary bg-primary/5 ring-4 ring-primary/5"
+                          : "border-primary/10 hover:border-primary/30"
+                      }`}
+                    >
+                      <div className={`mt-1 h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                        formData.category === cat.id ? "border-primary bg-primary" : "border-primary/20"
+                      }`}>
+                        {formData.category === cat.id && <div className="h-2 w-2 rounded-full bg-white" />}
+                      </div>
+                      <div className="flex-1">
+                        <p className={`font-bold text-sm ${formData.category === cat.id ? "text-primary" : "text-foreground"}`}>
+                          {cat.label}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                          {cat.description}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="p-4 bg-destructive/5 border border-destructive/20 rounded-2xl flex items-start gap-3 text-destructive text-sm animate-in fade-in slide-in-from-top-1">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>{error}</p>
+              </div>
+            )}
+
+            {success && (
+              <div className="p-4 bg-secondary/10 border border-secondary/20 rounded-2xl flex items-start gap-3 text-secondary-foreground text-sm animate-in fade-in slide-in-from-top-1">
+                <CheckCircle className="h-5 w-5 shrink-0" />
+                <p>{success}</p>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg hover:shadow-xl transition-all"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              ) : isLogin ? (
+                "Sign In"
+              ) : (
+                "Create Account"
+              )}
+            </Button>
+
+            <div className="relative py-2">
               <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
+                <div className="w-full border-t border-primary/10"></div>
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-white px-2 text-gray-500">Or continue with</span>
+                <span className="bg-background px-4 text-muted-foreground font-medium">Or continue with</span>
               </div>
             </div>
 
             <Button
-              onClick={handleGoogleSignIn}
-              disabled={isLoadingGoogle || isLoading}
+              type="button"
               variant="outline"
-              className="w-full"
-              size="lg"
+              className="w-full h-14 rounded-2xl border-primary/20 hover:bg-primary/5 transition-all flex items-center justify-center gap-3 font-semibold"
+              onClick={handleGoogleSignIn}
+              disabled={isLoadingGoogle}
             >
               {isLoadingGoogle ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
+                <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
                 <>
-                  <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24">
                     <path
                       fill="currentColor"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -402,73 +440,63 @@ function SignInForm() {
                       d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                     />
                   </svg>
-                  Continue with Google
+                  Google Account
                 </>
               )}
             </Button>
+          </form>
 
-            <div className="text-center text-sm">
-              <button
-                onClick={() => {
-                  setIsLogin(!isLogin)
-                  setError("")
-                  setSuccess("")
-                  setFormData({ email: "", password: "", username: "" })
-                  setPasswordValidation({
-                    length: false,
-                    uppercase: false,
-                    lowercase: false,
-                    number: false,
-                    special: false
-                  })
-                }}
-                className="text-blue-600 hover:underline"
-              >
-                {isLogin 
-                  ? "Don't have an account? Sign up" 
-                  : "Already have an account? Sign in"}
-              </button>
-            </div>
+          <div className="mt-8 text-center space-y-6">
+            <button
+              onClick={() => {
+                setIsLogin(!isLogin)
+                setError("")
+                setSuccess("")
+                setFormData({ email: "", password: "", username: "", category: "flower_vendor" })
+                setPasswordValidation({
+                  length: false,
+                  uppercase: false,
+                  lowercase: false,
+                  number: false,
+                  special: false
+                })
+              }}
+              className="text-sm font-semibold text-muted-foreground hover:text-primary transition-colors"
+            >
+              {isLogin ? (
+                <>New to NepWork? <span className="text-primary underline decoration-2 underline-offset-4">Create an account</span></>
+              ) : (
+                <>Already have an account? <span className="text-primary underline decoration-2 underline-offset-4">Sign in</span></>
+              )}
+            </button>
 
-            <div className="mt-6 text-center">
-              <p className="text-xs text-gray-600">
+            {role === "customer" && (
+              <p className="text-sm text-center text-muted-foreground">
+                Prefer phone?{" "}
+                <Link href="/auth/register-client" className="text-primary font-bold underline underline-offset-4">
+                  Sign up with OTP
+                </Link>
+              </p>
+            )}
+
+            <div className="pt-4 border-t border-primary/10">
+              <p className="text-xs text-muted-foreground mb-3">
                 By signing in, you agree to our{" "}
-                <a href="/terms" className="text-blue-600 hover:underline">
-                  Terms of Service
-                </a>
-                {" "}
-                and{" "}
-                <a href="/privacy" className="text-blue-600 hover:underline">
-                  Privacy Policy
-                </a>
+                <a href="/terms" className="text-primary hover:underline font-semibold">Terms</a>
+                {" "}and{" "}
+                <a href="/privacy" className="text-primary hover:underline font-semibold">Privacy Policy</a>
               </p>
             </div>
-          </CardContent>
-        </Card>
-
-        <div className="text-center">
-          <p className="text-sm text-gray-600">
-            Want to join as a {role === "provider" ? "client" : "service provider"}?{" "}
-            <a 
-              href={`/auth/signin?role=${role === "provider" ? "client" : "provider"}`}
-              className="text-blue-600 hover:underline font-medium"
-            >
-              Switch here
-            </a>
-          </p>
-        </div>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
 
 export default function SignInPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    }>
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}>
       <SignInForm />
     </Suspense>
   )

@@ -14,11 +14,13 @@ class UserSerializer(serializers.ModelSerializer):
             "display_name",
             "phone_number",
             "role",
+            "category",
+            "is_featured",
             "avatar_url",
             "bio",
             "is_kyc_verified",
         ]
-        read_only_fields = ["id", "username", "email", "role"]
+        read_only_fields = ["id", "username", "email", "role", "is_featured"]
 
     def get_is_kyc_verified(self, obj):
         """Check if user has verified KYC"""
@@ -32,6 +34,7 @@ class KYCVerificationSerializer(serializers.ModelSerializer):
     citizenship_url = serializers.SerializerMethodField()
     driving_license_url = serializers.SerializerMethodField()
     passport_url = serializers.SerializerMethodField()
+    trade_certificate_url = serializers.SerializerMethodField()
     user_email = serializers.EmailField(source="user.email", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     is_verified = serializers.BooleanField(read_only=True)
@@ -55,6 +58,9 @@ class KYCVerificationSerializer(serializers.ModelSerializer):
             "driving_license_url",
             "passport",
             "passport_url",
+            "trade_certificate",
+            "trade_certificate_url",
+            "category",
             "status",
             "status_display",
             "is_verified",
@@ -96,6 +102,14 @@ class KYCVerificationSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(obj.driving_license.url)
             return obj.driving_license.url
+        return None
+
+    def get_trade_certificate_url(self, obj):
+        if obj.trade_certificate:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.trade_certificate.url)
+            return obj.trade_certificate.url
         return None
 
     def get_passport_url(self, obj):

@@ -4,11 +4,52 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 from accounts.models import UserRole, Notification
 from .models import Booking
 from .serializers import BookingSerializer
+
+
+def _booking_payload(booking, request, many=False):
+    return BookingSerializer(booking, many=many, context={"request": request}).data
 from django.utils.dateparse import parse_date
 from datetime import datetime
+
+BOOKING_PREMIUM_THRESHOLD = Decimal("5000")
+
+
+def _provider_day_blocked(service, day) -> bool:
+    try:
+        from marketplace.models import ProviderUnavailability
+
+        return ProviderUnavailability.objects.filter(provider_id=service.provider_id, date=day).exists()
+    except Exception:
+        return False
+
+
+def _service_price_dec(service):
+    p = service.base_price
+    if p is None:
+        return Decimal("0")
+    return Decimal(str(p))
+
+
+def _can_book_budget_tier(user):
+    if getattr(user, "phone_verified", False):
+        return True
+    if getattr(user, "is_email_verified", False):
+        return True
+    if getattr(user, "google_id", None):
+        return True
+    return False
+
+
+def _profile_complete_premium(user):
+    return bool(
+        (user.display_name or "").strip()
+        and (user.phone_number or "").strip()
+        and (user.address or "").strip()
+    )
 
 
 @api_view(["POST"]) 
@@ -49,8 +90,31 @@ def create_booking(request):
     ).exists()
     if exists_conflict:
         return Response({"detail": "Selected time slot is already taken.", "errors": {"scheduled_for": "This time slot is already taken"}}, status=status.HTTP_409_CONFLICT)
-    
+
+    price = _service_price_dec(service)
+    if price >= BOOKING_PREMIUM_THRESHOLD:
+        if not _profile_complete_premium(user):
+            return Response(
+                {
+                    "detail": "Services Rs 5,000 and above need a complete profile: your name, phone, and address.",
+                    "code": "profile_incomplete",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+    else:
+        if not _can_book_budget_tier(user):
+            return Response(
+                {
+                    "detail": "For services under Rs 5,000, verify your phone (sign up with phone OTP) or use a verified email / Google account.",
+                    "code": "budget_tier_requirements",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
     booking = serializer.save(customer=user, status=Booking.Status.PENDING)
+    if booking.service.base_price is not None:
+        booking.total_amount = booking.service.base_price
+        booking.save(update_fields=["total_amount"])
 
     Notification.objects.create(
         user=booking.service.provider,
@@ -64,7 +128,7 @@ def create_booking(request):
         related_service_id=booking.service.id,
     )
 
-    return Response(BookingSerializer(booking).data, status=status.HTTP_201_CREATED)
+    return Response(_booking_payload(booking, request), status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"]) 
@@ -99,8 +163,27 @@ def my_bookings(request):
             qs = qs[:limit_val]
         except ValueError:
             pass
-    serializer = BookingSerializer(qs, many=True)
+    serializer = BookingSerializer(qs, many=True, context={"request": request})
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def booking_detail(request, booking_id: int):
+    """Single booking for the customer or the service provider (or admin)."""
+    user = request.user
+    try:
+        booking = Booking.objects.select_related("service", "service__provider", "customer").get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    is_customer = booking.customer_id == user.id
+    is_provider = booking.service.provider_id == user.id
+    is_admin = getattr(user, "role", None) == UserRole.ADMIN
+    if not (is_customer or is_provider or is_admin):
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+
+    return Response(_booking_payload(booking, request))
 
 
 @api_view(["PATCH"]) 
@@ -140,6 +223,7 @@ def update_booking_status(request, booking_id: int):
             if old_status != Booking.Status.PENDING:
                 return Response({"detail": "Only pending bookings can be confirmed."}, status=status.HTTP_400_BAD_REQUEST)
             booking.status = Booking.Status.CONFIRMED
+            booking.delivery_phase = Booking.DeliveryPhase.NONE
             booking.confirmed_at = now
             booking.provider_responded_at = now
             # Auto-create booking chat thread
@@ -167,12 +251,9 @@ def update_booking_status(request, booking_id: int):
             if old_status != Booking.Status.CONFIRMED:
                 return Response({"detail": "Only confirmed bookings can be marked as completed."}, status=status.HTTP_400_BAD_REQUEST)
             booking.status = Booking.Status.COMPLETED
-            # Lock booking chat on completion
-            try:
-                from chats.models import ChatThread
-                ChatThread.objects.filter(booking=booking, thread_type=ChatThread.Type.BOOKING).update(status=ChatThread.Status.LOCKED)
-            except Exception:
-                pass
+            if booking.payment_status == Booking.BookingPaymentStatus.NOT_DUE:
+                booking.payment_status = Booking.BookingPaymentStatus.UNPAID
+            # Keep booking chat open for payment, reviews, and disputes
         else:
             return Response({"detail": "Unsupported status update."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -210,13 +291,16 @@ def update_booking_status(request, booking_id: int):
             Notification.objects.create(
                 user=booking.customer,
                 notification_type=Notification.Type.BOOKING_COMPLETED,
-                title="Booking Completed",
-                message=f"Your booking for '{booking.service.title}' has been marked as completed. Please rate your experience.",
+                title="Booking completed",
+                message=(
+                    f"Your booking for '{booking.service.title}' is marked complete. "
+                    f"Please pay via eSewa if you have not yet, leave a review, and use chat if you need support."
+                ),
                 related_booking_id=booking.id,
                 related_service_id=booking.service.id
             )
         
-        return Response(BookingSerializer(booking).data)
+        return Response(_booking_payload(booking, request))
     elif getattr(user, "role", None) == UserRole.CUSTOMER:
         if booking.customer_id != user.id:
             return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
@@ -249,7 +333,7 @@ def update_booking_status(request, booking_id: int):
             related_service_id=booking.service.id
         )
         
-        return Response(BookingSerializer(booking).data)
+        return Response(_booking_payload(booking, request))
     else:
         # admin can set any
         if new_status not in dict(Booking.Status.choices).keys():
@@ -280,15 +364,12 @@ def update_booking_status(request, booking_id: int):
                 booking.customer_cancelled_at = now
         elif new_status == Booking.Status.COMPLETED:
             booking.status = Booking.Status.COMPLETED
-            try:
-                from chats.models import ChatThread
-                ChatThread.objects.filter(booking=booking, thread_type=ChatThread.Type.BOOKING).update(status=ChatThread.Status.LOCKED)
-            except Exception:
-                pass
+            if booking.payment_status == Booking.BookingPaymentStatus.NOT_DUE:
+                booking.payment_status = Booking.BookingPaymentStatus.UNPAID
         else:
             booking.status = new_status
         booking.save()
-        return Response(BookingSerializer(booking).data)
+        return Response(_booking_payload(booking, request))
 
 
 @api_view(["PATCH"]) 
@@ -315,7 +396,34 @@ def rate_booking(request, booking_id: int):
     booking.rating = rating_val
     booking.review = review
     booking.save()
-    return Response(BookingSerializer(booking).data)
+    return Response(_booking_payload(booking, request))
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def update_delivery_phase(request, booking_id: int):
+    """Provider-only: advance fulfillment tracking while booking is confirmed."""
+    user = request.user
+    if getattr(user, "role", None) != UserRole.PROVIDER:
+        return Response({"detail": "Only providers can update fulfillment."}, status=status.HTTP_403_FORBIDDEN)
+    try:
+        booking = Booking.objects.select_related("service").get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    if booking.service.provider_id != user.id:
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    if booking.status != Booking.Status.CONFIRMED:
+        return Response(
+            {"detail": "Fulfillment updates are only available for confirmed bookings."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    phase = request.data.get("delivery_phase")
+    valid = {c[0] for c in Booking.DeliveryPhase.choices}
+    if phase not in valid:
+        return Response({"detail": "Invalid delivery_phase."}, status=status.HTTP_400_BAD_REQUEST)
+    booking.delivery_phase = phase
+    booking.save(update_fields=["delivery_phase", "updated_at"])
+    return Response(_booking_payload(booking, request))
 
 
 @api_view(["GET"])
@@ -339,7 +447,7 @@ def service_booked_slots(request, service_id: int):
         scheduled_for__lt=timezone.now()  # Exclude past bookings
     ).values_list('scheduled_for', flat=True)
     
-    # Convert to ISO format strings
+    booked_times = [t.isoformat() for t in booked_slots]
     return Response({"booked_slots": booked_times})
 
 
@@ -366,6 +474,16 @@ def service_available_slots(request, service_id: int):
     day = parse_date(date_str)
     if not day:
         return Response({"detail": "Invalid date format"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if _provider_day_blocked(service, day):
+        return Response(
+            {
+                "date": date_str,
+                "available_slots": [],
+                "booked_slots": [],
+                "provider_day_blocked": True,
+            }
+        )
     
     try:
         interval = int(request.query_params.get("interval") or 60)
@@ -429,6 +547,15 @@ def service_available_slots_public(request, service_id: int):
         day = parse_date(date_str)
         if not day:
             return Response({"detail": "Invalid date format"}, status=status.HTTP_400_BAD_REQUEST)
+        if _provider_day_blocked(service, day):
+            return Response(
+                {
+                    "date": date_str,
+                    "available_slots": [],
+                    "booked_slots": [],
+                    "provider_day_blocked": True,
+                }
+            )
         interval = int(request.query_params.get("interval") or 60)
         start_hour = int(request.query_params.get("start_hour") or 9)
         end_hour = int(request.query_params.get("end_hour") or 18)
@@ -454,6 +581,16 @@ def service_available_slots_public(request, service_id: int):
         tznow = timezone.now()
         for offset in range(1, 8):
             day = (tznow + timedelta(days=offset)).date()
+            if _provider_day_blocked(service, day):
+                preview_days.append(
+                    {
+                        "date": day.isoformat(),
+                        "available_slots": [],
+                        "booked_slots": [],
+                        "provider_day_blocked": True,
+                    }
+                )
+                continue
             start_hour = int(request.query_params.get("start_hour") or 9)
             end_hour = int(request.query_params.get("end_hour") or 18)
             interval = int(request.query_params.get("interval") or 60)
@@ -494,9 +631,11 @@ def provider_orders(request):
     new_requests = base.filter(status=Booking.Status.PENDING).order_by("-created_at")
     active = base.filter(status=Booking.Status.CONFIRMED).order_by("scheduled_for", "-created_at")
     completed = base.filter(status=Booking.Status.COMPLETED).order_by("-updated_at", "-created_at")
-    completed_paid = completed.filter(payment_status="paid")
-    completed_unpaid = completed.exclude(payment_status="paid")
-    
+    paid_like = [Booking.BookingPaymentStatus.HELD, Booking.BookingPaymentStatus.RELEASED]
+    completed_paid = completed.filter(payment_status__in=paid_like)
+    completed_unpaid = completed.exclude(payment_status__in=paid_like)
+
+    ctx = {"request": request}
     return Response({
         "counts": {
             "new_requests": new_requests.count(),
@@ -506,9 +645,61 @@ def provider_orders(request):
             "completed_unpaid": completed_unpaid.count(),
             "total_completed": completed.count(),
         },
-        "new_requests": BookingSerializer(new_requests, many=True).data,
-        "active": BookingSerializer(active, many=True).data,
-        "completed": BookingSerializer(completed, many=True).data,
-        "completed_paid": BookingSerializer(completed_paid, many=True).data,
-        "completed_unpaid": BookingSerializer(completed_unpaid, many=True).data,
+        "new_requests": BookingSerializer(new_requests, many=True, context=ctx).data,
+        "active": BookingSerializer(active, many=True, context=ctx).data,
+        "completed": BookingSerializer(completed, many=True, context=ctx).data,
+        "completed_paid": BookingSerializer(completed_paid, many=True, context=ctx).data,
+        "completed_unpaid": BookingSerializer(completed_unpaid, many=True, context=ctx).data,
     })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def upcoming_seasonal_events(request):
+    from .models import SeasonalEvent
+
+    today = timezone.now().date()
+    cutoff = today + timedelta(days=45)
+    events = SeasonalEvent.objects.filter(
+        is_active=True,
+        start_date__gte=today,
+        start_date__lte=cutoff,
+    ).order_by("start_date")
+    return Response(
+        [
+            {
+                "id": e.id,
+                "name": e.name,
+                "start_date": e.start_date.isoformat(),
+                "end_date": e.end_date.isoformat(),
+            }
+            for e in events
+        ]
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def report_booking_freshness(request, booking_id: int):
+    from marketplace.models import FreshnessReport
+
+    try:
+        booking = Booking.objects.select_related("service__provider").get(id=booking_id)
+    except Booking.DoesNotExist:
+        return Response({"detail": "Booking not found."}, status=status.HTTP_404_NOT_FOUND)
+    if booking.customer_id != request.user.id:
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    if booking.status != Booking.Status.COMPLETED:
+        return Response(
+            {"detail": "You can only report after the booking is completed."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    desc = (request.data.get("description") or "").strip()
+    FreshnessReport.objects.create(
+        booking=booking,
+        client=request.user,
+        provider=booking.service.provider,
+        description=desc,
+        status=FreshnessReport.Status.PENDING,
+    )
+    return Response({"message": "Report submitted."}, status=status.HTTP_201_CREATED)

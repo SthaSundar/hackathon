@@ -1,5 +1,40 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "react-calendar/dist/Calendar.css";
+
+.npw-cal-wrap .react-calendar {
+  width: 100%;
+  border: 1px solid color-mix(in oklch, var(--primary) 15%, transparent);
+  border-radius: 1rem;
+  font-family: inherit;
+}
+.npw-cal-wrap .react-calendar__tile--now {
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+}
+.npw-cal-unavailable {
+  background: #fecaca !important;
+  color: #7f1d1d !important;
+}
+.npw-cal-available {
+  background: #dcfce7 !important;
+  color: #14532d !important;
+}
+
+.npw-nepali-cal-wrap {
+  font-family: inherit;
+}
+.npw-nepali-cal-day:not(.npw-cal-unavailable):not(.npw-cal-available) {
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+  color: var(--foreground);
+}
+.npw-nepali-cal-day.npw-cal-available {
+  background: #dcfce7 !important;
+  color: #14532d !important;
+}
+.npw-nepali-cal-day.npw-cal-unavailable {
+  background: #fecaca !important;
+  color: #7f1d1d !important;
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -45,60 +80,60 @@
 
 :root {
   --radius: 0.625rem;
-  /* Blue as primary, white as secondary */
-  --background: #ffffff; /* White */
-  --foreground: #1e40af; /* Blue-800 for text */
+  /* Soft Elegant Theme */
+  --background: #FFF8F9; /* Very soft pink-white */
+  --foreground: #4a2c3a; /* Darker warm gray for text */
   --card: #ffffff; /* White */
-  --card-foreground: #1e40af; /* Blue-800 */
-  --popover: #ffffff; /* White */
-  --popover-foreground: #1e40af; /* Blue-800 */
-  --primary: #2563eb; /* Blue-600 - Primary blue */
+  --card-foreground: #4a2c3a; 
+  --popover: #ffffff; 
+  --popover-foreground: #4a2c3a; 
+  --primary: #F48FB1; /* Soft Pink */
   --primary-foreground: #ffffff; /* White text on primary */
-  --secondary: #ffffff; /* White */
-  --secondary-foreground: #2563eb; /* Blue text on secondary */
-  --muted: #f3f4f6; /* Light gray */
-  --muted-foreground: #4b5563; /* Gray-600 */
-  --accent: #dbeafe; /* Blue-100 */
-  --accent-foreground: #1e40af; /* Blue-800 */
+  --secondary: #A5D6A7; /* Light Green */
+  --secondary-foreground: #1b5e20; /* Dark green on secondary */
+  --muted: #fef1f5; /* Very soft pink for muted backgrounds */
+  --muted-foreground: #8a6c76; /* Muted text */
+  --accent: #fce4ec; /* Lighter pink */
+  --accent-foreground: #e91e63; /* Pink text on accent */
   --destructive: #ef4444; /* Red-500 */
-  --border: #e5e7eb; /* Gray-200 */
-  --input: #f9fafb; /* Gray-50 */
-  --ring: #2563eb; /* Blue-600 */
-  --chart-1: #3b82f6; /* Blue-500 */
-  --chart-2: #60a5fa; /* Blue-400 */
-  --chart-3: #93c5fd; /* Blue-300 */
-  --chart-4: #bfdbfe; /* Blue-200 */
-  --chart-5: #dbeafe; /* Blue-100 */
-  --sidebar: #ffffff; /* White */
-  --sidebar-foreground: #1e40af; /* Blue-800 */
-  --sidebar-primary: #2563eb; /* Blue-600 */
-  --sidebar-primary-foreground: #ffffff; /* White */
-  --sidebar-accent: #f3f4f6; /* Light gray */
-  --sidebar-accent-foreground: #1e40af; /* Blue-800 */
-  --sidebar-border: #e5e7eb; /* Gray-200 */
-  --sidebar-ring: #2563eb; /* Blue-600 */
+  --border: #f8bbd0; /* Soft pink border */
+  --input: #ffffff; /* White */
+  --ring: #F48FB1; /* Soft Pink */
+  --chart-1: #F48FB1; 
+  --chart-2: #A5D6A7; 
+  --chart-3: #fce4ec; 
+  --chart-4: #81c784; 
+  --chart-5: #f8bbd0; 
+  --sidebar: #FFF8F9; 
+  --sidebar-foreground: #4a2c3a; 
+  --sidebar-primary: #F48FB1; 
+  --sidebar-primary-foreground: #ffffff; 
+  --sidebar-accent: #fce4ec; 
+  --sidebar-accent-foreground: #e91e63; 
+  --sidebar-border: #f8bbd0; 
+  --sidebar-ring: #F48FB1; 
 }
 
-/* Minimal dark mode - avoiding dark colors as requested */
+/* Minimal dark mode - avoiding deep dark colors, using warm tones */
 .dark {
-  --background: #f9fafb; /* Very light gray instead of dark */
-  --foreground: #1e3a8a; /* Darker blue */
-  --card: #ffffff; /* White */
-  --card-foreground: #1e3a8a; /* Darker blue */
-  --popover: #ffffff; /* White */
-  --popover-foreground: #1e3a8a; /* Darker blue */
-  --primary: #2563eb; /* Blue-600 */
-  --primary-foreground: #ffffff; /* White */
-  --secondary: #f3f4f6; /* Light gray */
-  --secondary-foreground: #1e40af; /* Blue-800 */
-  --muted: #e5e7eb; /* Gray-200 */
-  --muted-foreground: #4b5563; /* Gray-600 */
-  --accent: #dbeafe; /* Blue-100 */
-  --accent-foreground: #1e40af; /* Blue-800 */
-  --destructive: #ef4444; /* Red-500 */
-  --border: #d1d5db; /* Gray-300 */
-  --input: #ffffff; /* White */
-  --ring: #2563eb; /* Blue-600 */
+  --background: #fdf5f7; 
+  --foreground: #3e2723; 
+  --card: #ffffff; 
+  --card-foreground: #3e2723; 
+  --popover: #ffffff; 
+  --popover-foreground: #3e2723; 
+  --primary: #F48FB1; 
+  --primary-foreground: #ffffff; 
+  --secondary: #A5D6A7; 
+  --secondary-foreground: #1b5e20; 
+  --muted: #fce4ec; 
+  --muted-foreground: #8a6c76; 
+  --accent: #f8bbd0; 
+  --accent-foreground: #ad1457; 
+  --destructive: #ef4444; 
+  --border: #f48fb1; 
+  --input: #ffffff; 
+  --ring: #F48FB1; 
 }
 
 @layer base {
@@ -107,6 +142,40 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-color: #ffffff; /* Force white background */
+  }
+}
+
+/* Custom Scrollbar */
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-primary/10 rounded-full hover:bg-primary/30 transition-colors;
+  }
+  
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
